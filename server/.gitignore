@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+*.log
+.DS_Store
+coverage
+uploads
+# seed 编译产物：Docker 构建期在容器内生成，本地不保留
+prisma/dist-seed/

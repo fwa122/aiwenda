@@ -1,0 +1,449 @@
+/* ==========================================================================
+   全局设计令牌（简易风格：低饱和色、弱阴影、克制的强调色）
+   ========================================================================== */
+:root {
+  /* 中性色 */
+  --c-bg: #ffffff;
+  --c-bg-soft: #f7f8fa;
+  --c-bg-hover: #f2f3f5;
+  --c-bg-active: #eceef1;
+  --c-border: #e6e8eb;
+  --c-border-soft: #f0f1f3;
+  --c-text: #1f2329;
+  --c-text-2: #646a73;
+  --c-text-3: #8f959e;
+  --c-text-4: #a8adb5;
+
+  /* 强调色（仅用于可点击元素与状态标识，不做大面积背景渲染） */
+  --brand: #3f6ae1;
+  --brand-hover: #3560d6;
+  --brand-active: #2c53bd;
+  --brand-soft: #eef3ff;
+  --brand-soft-2: #f6f9ff;
+
+  /* 语义色 */
+  --c-success: #18a058;
+  --c-success-soft: #eaf7f0;
+  --c-warning: #e37318;
+  --c-warning-soft: #fdf3e7;
+  --c-danger: #e34d59;
+  --c-danger-soft: #fdeef0;
+  --c-info: #6b7280;
+  --c-info-soft: #f1f2f4;
+
+  /* 圆角 */
+  --radius-s: 6px;
+  --radius: 10px;
+  --radius-l: 14px;
+  --radius-xl: 18px;
+
+  /* 阴影 */
+  --shadow-s: 0 1px 2px rgba(31, 35, 41, 0.04);
+  --shadow: 0 4px 16px rgba(31, 35, 41, 0.06);
+  --shadow-l: 0 8px 32px rgba(31, 35, 41, 0.1);
+
+  /* 布局尺寸 */
+  --sidebar-w: 260px;
+  --topbar-h: 56px;
+
+  /* Element Plus 主题变量覆盖 */
+  --el-color-primary: var(--brand);
+  --el-color-primary-light-3: #7e9cec;
+  --el-color-primary-light-5: #a8bdf3;
+  --el-color-primary-light-7: #ccd9f8;
+  --el-color-primary-light-8: #dee7fb;
+  --el-color-primary-light-9: #eef3ff;
+  --el-color-success: var(--c-success);
+  --el-color-warning: var(--c-warning);
+  --el-color-danger: var(--c-danger);
+  --el-color-error: var(--c-danger);
+  --el-text-color-primary: var(--c-text);
+  --el-text-color-regular: var(--c-text-2);
+  --el-text-color-secondary: var(--c-text-3);
+  --el-text-color-placeholder: var(--c-text-4);
+  --el-border-color: var(--c-border);
+  --el-border-color-light: var(--c-border-soft);
+  --el-border-color-lighter: var(--c-border-soft);
+  --el-border-radius-base: var(--radius-s);
+  --el-font-size-base: 14px;
+  --el-bg-color: var(--c-bg);
+  --el-fill-color-light: var(--c-bg-hover);
+  --el-fill-color-blank: var(--c-bg);
+}
+
+/* ==========================================================================
+   基础重置
+   ========================================================================== */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--c-text);
+  background: var(--c-bg-soft);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+h1, h2, h3, h4, h5, h6, p, ul, ol, figure {
+  margin: 0;
+}
+
+ul, ol {
+  padding-left: 20px;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d8dbe0;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #c2c6cc;
+}
+
+/* 细滚动条（侧栏、面板内列表） */
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.scroll-thin:hover::-webkit-scrollbar-thumb {
+  background: #dcdfe4;
+}
+
+/* ==========================================================================
+   通用工具类
+   ========================================================================== */
+.text-ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.text-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.text-secondary {
+  color: var(--c-text-2);
+}
+
+.text-muted {
+  color: var(--c-text-3);
+}
+
+.mono {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, Menlo, monospace;
+}
+
+/* 通用卡片 */
+.app-card {
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-s);
+}
+
+/* 页面容器 */
+.page-container {
+  height: 100%;
+  overflow: auto;
+  background: var(--c-bg-soft);
+}
+
+.page-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* ==========================================================================
+   Markdown 正文渲染样式（AI 回答 / 文档预览共用）
+   ========================================================================== */
+.md-body {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--c-text);
+  word-break: break-word;
+}
+
+.md-body > *:first-child {
+  margin-top: 0;
+}
+
+.md-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 18px 0 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.md-body h1 { font-size: 19px; }
+.md-body h2 { font-size: 17px; }
+.md-body h3 { font-size: 15px; }
+.md-body h4 { font-size: 14px; }
+
+.md-body p {
+  margin: 10px 0;
+}
+
+.md-body ul,
+.md-body ol {
+  margin: 10px 0;
+  padding-left: 22px;
+}
+
+.md-body li {
+  margin: 4px 0;
+}
+
+.md-body strong {
+  font-weight: 600;
+}
+
+.md-body a {
+  color: var(--brand);
+}
+
+.md-body blockquote {
+  margin: 12px 0;
+  padding: 8px 14px;
+  color: var(--c-text-2);
+  background: var(--c-bg-soft);
+  border-left: 3px solid var(--c-border);
+  border-radius: 0 var(--radius-s) var(--radius-s) 0;
+}
+
+.md-body hr {
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--c-border-soft);
+}
+
+.md-body code {
+  padding: 2px 5px;
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, Menlo, monospace;
+  font-size: 12.5px;
+  color: #c7254e;
+  background: #f6f7f9;
+  border-radius: 4px;
+}
+
+.md-body pre {
+  margin: 12px 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  background: #f8f9fb;
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--radius);
+}
+
+.md-body pre code {
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--c-text);
+  background: transparent;
+}
+
+.md-body table {
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.md-body th,
+.md-body td {
+  padding: 8px 12px;
+  border: 1px solid var(--c-border-soft);
+  text-align: left;
+}
+
+.md-body th {
+  background: var(--c-bg-soft);
+  font-weight: 600;
+}
+
+.md-body img {
+  max-width: 100%;
+  border-radius: var(--radius-s);
+}
+
+/* 内联引用徽标：回答正文中的 [n]（点击查看来源，事件由 ChatMessage 委托处理） */
+.md-body .cite {
+  margin: 0 2px;
+  padding: 1px 5px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--brand);
+  cursor: pointer;
+  user-select: none;
+  background: var(--brand-soft);
+  border-radius: 4px;
+  transition: all 0.14s;
+}
+
+.md-body .cite:hover {
+  color: #fff;
+  background: var(--brand);
+}
+
+/* 代码块容器与复制按钮 */
+.md-body .code-block {
+  position: relative;
+}
+
+.md-body .code-block .code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  padding: 2px 10px;
+  font-size: 11.5px;
+  color: var(--c-text-3);
+  cursor: pointer;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 4px;
+  opacity: 0;
+  transition: all 0.16s;
+}
+
+.md-body .code-block:hover .code-copy {
+  opacity: 1;
+}
+
+.md-body .code-block .code-copy:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+
+.md-body .code-block pre {
+  margin: 12px 0;
+}
+
+/* 流式输出光标 */
+.stream-cursor::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 15px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  background: var(--brand);
+  border-radius: 1px;
+  animation: cursor-blink 1s steps(2, start) infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* 淡入动画 */
+.fade-in {
+  animation: fade-in 0.24s ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Element Plus 细节微调，贴合简易风格 */
+.el-button {
+  font-weight: 500;
+}
+
+.el-dialog__header {
+  margin-right: 0;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--c-border-soft);
+}
+
+.el-dialog__title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.el-dialog__body {
+  padding: 20px;
+}
+
+.el-dialog__footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--c-border-soft);
+}
+
+.el-drawer__header {
+  margin-bottom: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--c-border-soft);
+}
+
+.el-drawer__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.el-table th.el-table__cell {
+  background: var(--c-bg-soft) !important;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.el-menu {
+  border-right: none !important;
+}
+
+.el-tag {
+  border-radius: 4px;
+}

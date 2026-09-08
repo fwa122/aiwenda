@@ -1,0 +1,38 @@
+# ===== 环境与密钥（严禁提交；frontend/.env.development 无敏感信息，放行）=====
+.env
+.env.*
+!frontend/.env.development
+# 无敏感信息的模板/构建配置，必须提交（Docker 构建依赖）
+!.env.docker.example
+!frontend/.env.production
+*.pem
+*.key
+
+# ===== 依赖 =====
+node_modules/
+.venv/
+
+# ===== 构建产物 =====
+dist/
+dist-ssr/
+.vite/
+__pycache__/
+*.pyc
+*.tsbuildinfo
+coverage/
+
+# ===== 日志与临时文件 =====
+*.log
+*.err
+logs/
+celerybeat-schedule
+
+# ===== 运行时数据 =====
+uploads/
+
+# ===== 系统与编辑器 =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

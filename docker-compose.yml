@@ -1,0 +1,132 @@
+# AI 知识库问答系统 · 全栈生产编排（A+A 方案：单文件 + 前端多阶段进镜像）
+#
+# 使用：
+#   1. cp .env.docker.example .env 并填入密钥（JWT_SECRET / INTERNAL_TOKEN / API Key 等）
+#   2. docker compose up -d --build
+#   3. 浏览器访问 http://<主机IP>/（NGINX_PORT 可改端口）
+#
+# 说明：
+#   - 与本地开发的 docker-compose.infra.yml 通过 project name（kb-prod）隔离，互不影响
+#   - postgres/redis/ai-service 均不映射宿主端口，仅容器网络内可达
+#   - server 与 worker 共享 uploads_data 卷（Node 落盘 /app/uploads，Python 读同路径）
+
+name: kb-prod
+
+services:
+  # ────────────────────────── 入口层 ──────────────────────────
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  # ────────────────────────── 应用层 ──────────────────────────
+  server:
+    build: ./server
+    image: kb-server:latest
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Shanghai
+      - PORT=3000
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-kb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kb}?schema=public
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-120m}
+      - AI_SERVICE_URL=http://ai-service:8000
+      - AI_SERVICE_TOKEN=${INTERNAL_TOKEN}
+      - AI_MOCK=false
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost}
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/v1/user/profile').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  ai-service:
+    build: ./ai-service
+    image: kb-ai-service:latest
+    environment: &ai_env
+      - TZ=Asia/Shanghai
+      # 智谱 BigModel（生成+向量+rerank+OCR）
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY}
+      - ZHIPU_BASE_URL=${ZHIPU_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      # Moonshot Kimi（可选生成模型）
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      - MOONSHOT_BASE_URL=${MOONSHOT_BASE_URL:-https://api.moonshot.cn/v1}
+      - MOONSHOT_THINKING=${MOONSHOT_THINKING:-disabled}
+      # 向量 / 默认生成参数
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-zhipu}
+      - LLM_MODEL=${LLM_MODEL:-glm-4-flash}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.3}
+      # 扫描件 OCR
+      - OCR_ENABLED=${OCR_ENABLED:-true}
+      - OCR_MAX_PAGES=${OCR_MAX_PAGES:-20}
+      # 基础设施（容器网络服务名）
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-kb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kb}
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      # 与 server 容器共享的上传目录（worker 直接读取落盘文件）
+      - UPLOAD_ROOT=/app/uploads
+      # 内部令牌（与 server 的 AI_SERVICE_TOKEN 同值，fail-closed）
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # Celery worker：与 ai-service 同镜像，消费解析任务；
+  # 必须挂同一个 uploads_data 卷才能读到上传文件
+  worker:
+    image: kb-ai-service:latest
+    command: celery -A app.tasks worker --loglevel=info --concurrency=2
+    environment: *ai_env
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # ────────────────────────── 基础设施层 ──────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-kb}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-kb}
+      - TZ=Asia/Shanghai
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kb} -d ${POSTGRES_DB:-kb}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:
+  uploads_data:

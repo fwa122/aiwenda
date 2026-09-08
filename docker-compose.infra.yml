@@ -1,0 +1,92 @@
+# ============================================================================
+# AI 知识库问答系统 · 基础设施（开发环境）
+#
+# 用途：只跑基础设施，应用代码（前端 / Node BFF / Python AI 服务）在宿主机本地运行
+#       —— 即「Infra in Docker, Code on Host」混合方案，避开 Windows 文件挂载性能问题
+#
+# 常用命令：
+#   启动（默认只起 PG + Redis）
+#     docker compose -f docker-compose.infra.yml up -d
+#   启动并包含 MinIO（P2 文件上传阶段才需要）
+#     docker compose -f docker-compose.infra.yml --profile storage up -d
+#   查看状态
+#     docker compose -f docker-compose.infra.yml ps
+#   停止（保留数据）
+#     docker compose -f docker-compose.infra.yml down
+#   停止并清空数据（慎用，不可恢复）
+#     docker compose -f docker-compose.infra.yml down -v
+#
+# 注意：以下账号密码仅用于本地开发，生产环境必须修改并改用 .env 管理
+# ============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 + pgvector
+  # 作用：业务数据（用户/知识库/文档/会话/消息）+ 向量数据（切片 embedding）
+  # 连接串：postgresql://kb:kb123456@localhost:5432/kb
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: kb-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kb}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kb123456}
+      POSTGRES_DB: ${POSTGRES_DB:-kb}
+      # 容器初始化时默认使用 UTF-8，避免中文乱码
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U kb -d kb']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Redis 7
+  # 作用：Celery 任务队列（Python 解析/向量化）+ 缓存 + 限流计数
+  # 注：Redis 官方不支持 Windows，Docker 是最省事的方案
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: kb-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # MinIO（S3 兼容对象存储）
+  # 作用：存放上传的原始文档
+  # 默认不启动，P2 阶段做文件上传时用 --profile storage 启用
+  # 控制台：http://localhost:9001（minioadmin / minioadmin）
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio
+    container_name: kb-minio
+    profiles: ['storage']
+    ports:
+      - '9000:9000' # API
+      - '9001:9001' # Web 控制台
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ':9001'
+    volumes:
+      - miniodata:/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:

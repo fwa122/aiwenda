@@ -1,0 +1,330 @@
+// ============================================================================
+// AI 知识库问答系统 · 数据模型
+//
+// 设计要点：
+// 1. ID 统一使用带前缀的字符串（u_xxx / kb_xxx / doc_xxx / conv_xxx / msg_xxx），
+//    由应用层生成，与前端 Mock 数据格式保持一致，便于联调时对照
+// 2. message_sources 只存引用「坐标」，不冗余存文档名 —— 文档改名后引用自动同步
+// 3. chunks.embedding 使用 pgvector 的 vector(1024)，Prisma 用 Unsupported 标记，
+//    读写通过原生 SQL 完成（由 Python 服务负责）
+// 4. 数据库列名使用 snake_case，Prisma 模型字段使用 camelCase，通过 @map 关联
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// 用户
+// ============================================================================
+model User {
+  id           String    @id // u_xxx
+  username     String    @unique @db.VarChar(64)
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  nickname     String?   @db.VarChar(64)
+  email        String?   @db.VarChar(128)
+  phone        String?   @db.VarChar(32)
+  role         String    @default("viewer") @db.VarChar(16) // admin | editor | viewer
+  department   String?   @db.VarChar(64)
+  status       String    @default("active") @db.VarChar(16) // active | disabled
+
+  // 配额（used 值实时统计，不冗余存储，避免数据不一致）
+  conversationLimit   Int    @default(30) @map("conversation_limit")
+  docLimit            Int    @default(200) @map("doc_limit")
+  storageLimit        BigInt @default(1073741824) @map("storage_limit") // 1GB
+  monthlyTokenLimit   Int    @default(200000) @map("monthly_token_limit")
+
+  // 月度 token 用量（问答时累加；token_month 记录所属月份，跨月自动重置）
+  monthlyTokenUsed    Int     @default(0) @map("monthly_token_used")
+  tokenMonth          String? @map("token_month") @db.VarChar(7)
+
+  lastLoginAt DateTime? @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  conversations Conversation[]
+  apiKeys       ApiKey[]
+  operationLogs OperationLog[]
+  knowledgeBases KnowledgeBase[]
+
+  @@index([role])
+  @@map("users")
+}
+
+// ============================================================================
+// 知识库
+// ============================================================================
+model KnowledgeBase {
+  id          String  @id // kb_xxx
+  name        String  @db.VarChar(128)
+  description String? @db.Text
+  icon        String? @db.VarChar(32)
+  color       String? @db.VarChar(16)
+  status      String  @default("draft") @db.VarChar(16) // ready | indexing | draft
+
+  docCount   Int    @default(0) @map("doc_count")
+  chunkCount Int    @default(0) @map("chunk_count")
+  totalSize  BigInt @default(0) @map("total_size")
+
+  // 索引配置
+  embeddingModel String @default("bge-large-zh-v1.5") @map("embedding_model") @db.VarChar(64)
+  vectorDim      Int    @default(1024) @map("vector_dim")
+  vectorStore    String @default("pgvector") @map("vector_store") @db.VarChar(32)
+  chunkSize      Int    @default(512) @map("chunk_size")
+  chunkOverlap   Int    @default(64) @map("chunk_overlap")
+  parser         String @default("smart") @db.VarChar(16) // smart | ocr | text
+
+  // 检索与生成配置（JSON，由应用层写入默认值）
+  // retriever: { topK, threshold, rerank, rerankModel, hybrid }
+  retrieverConfig Json @map("retriever_config")
+  // llm: { provider, model, temperature }
+  llmConfig Json @map("llm_config")
+
+  visibility  String  @default("internal") @db.VarChar(16) // internal | private | public
+  owner       String? @db.VarChar(64)
+  // 归属用户（可空；NULL 视为遗留公共资源，仅 admin 可写）
+  userId      String? @map("user_id")
+  user        User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  memberCount Int     @default(1) @map("member_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  documents Document[]
+  chunks    Chunk[]
+
+  @@index([status])
+  @@index([userId])
+  @@index([updatedAt])
+  @@map("knowledge_bases")
+}
+
+// ============================================================================
+// 文档
+// ============================================================================
+model Document {
+  id       String @id // doc_xxx
+  kbId     String @map("kb_id")
+  name     String @db.VarChar(255)
+  type     String @db.VarChar(16) // pdf | docx | xlsx | pptx | md | txt | html | csv
+  size     BigInt @default(0)
+  pages    Int    @default(0)
+
+  // MinIO 对象路径，如 kb_001/doc_1001/产品白皮书.pdf
+  storageKey String? @map("storage_key") @db.VarChar(255)
+
+  // pending | parsing | indexing | parsed | failed
+  status     String  @default("pending") @db.VarChar(16)
+  progress   Int     @default(0)
+  chunkCount Int     @default(0) @map("chunk_count")
+  errorMsg   String? @map("error_msg") @db.Text
+
+  version  String? @db.VarChar(32)
+  uploader String? @db.VarChar(64)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  chunks        Chunk[]
+
+  @@index([kbId, status])
+  @@index([kbId, updatedAt])
+  @@map("documents")
+}
+
+// ============================================================================
+// 文档切片（含向量）
+// 注意：embedding 为 pgvector 类型，Prisma Client 无法直接读写，
+//       需通过 $queryRaw 操作（实际由 Python 服务写入与检索）
+// ============================================================================
+model Chunk {
+  id         String @id // ck_xxx
+  kbId       String @map("kb_id")
+  docId      String @map("doc_id")
+  chunkIndex Int    @map("chunk_index")
+  page       Int    @default(1)
+  charCount  Int    @default(0) @map("char_count")
+  content    String @db.Text
+
+  /// pgvector 列，维度需与知识库的 vector_dim 一致（默认 1024）
+  /// HNSW 索引在迁移 SQL 中手动创建（Prisma 不支持在 schema 中声明）
+  embedding Unsupported("vector(1024)")?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  document      Document      @relation(fields: [docId], references: [id], onDelete: Cascade)
+
+  @@index([docId])
+  @@index([kbId])
+  @@map("chunks")
+}
+
+// ============================================================================
+// 会话
+// ============================================================================
+model Conversation {
+  id     String @id // conv_xxx
+  userId String @map("user_id")
+  title  String @db.VarChar(128)
+
+  /// 关联的知识库 ID 数组，如 ["kb_001"]
+  kbIds Json  @map("kb_ids")
+  model String? @db.VarChar(64)
+  pinned Boolean @default(false)
+
+  messageCount Int @default(0) @map("message_count")
+  tokenUsed    Int @default(0) @map("token_used")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([userId, pinned, updatedAt])
+  @@map("conversations")
+}
+
+// ============================================================================
+// 消息
+// ============================================================================
+model Message {
+  id             String @id // msg_xxx
+  conversationId String @map("conversation_id")
+  role           String @db.VarChar(16) // user | assistant
+  content        String @db.Text
+
+  /// streaming | done | stopped | error
+  status String @default("done") @db.VarChar(16)
+
+  /// { model, elapsedMs, tokens: { prompt, completion, total } }
+  meta Json?
+
+  /// like | dislike | null
+  feedback String? @db.VarChar(16)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sources      MessageSource[]
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+// ============================================================================
+// 引用来源
+// 关键：只存「坐标」，不冗余存文档名。展示时 JOIN documents 取当前名称，
+//       这样文档改名后历史引用的显示会自动同步
+// ============================================================================
+model MessageSource {
+  id         BigInt @id @default(autoincrement())
+  messageId  String @map("message_id")
+  kbId       String @map("kb_id")
+  docId      String @map("doc_id")
+  chunkId    String @map("chunk_id")
+  chunkIndex Int    @map("chunk_index")
+  page       Int    @default(1)
+  score      Float  @default(0)
+  sortOrder  Int    @default(0) @map("sort_order")
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("message_sources")
+}
+
+// ============================================================================
+// API 密钥
+// 安全：只存哈希，明文仅在创建时返回一次；keyPreview 用于列表脱敏展示
+// ============================================================================
+model ApiKey {
+  id         String @id // key_xxx
+  userId     String @map("user_id")
+  name       String @db.VarChar(64)
+  keyHash    String @map("key_hash") @db.VarChar(255)
+  keyPreview String @map("key_preview") @db.VarChar(32) // 如 sk-kb-8f2a****3c1d
+
+  /// 授权的知识库 ID 数组
+  scope Json @default("[]")
+
+  status      String    @default("active") @db.VarChar(16) // active | disabled
+  quotaPerDay Int       @default(1000) @map("quota_per_day")
+  usedToday   Int       @default(0) @map("used_today")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  lastUsedAt  DateTime? @map("last_used_at")
+  expiredAt   DateTime? @map("expired_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+// ============================================================================
+// 系统设置（单行表，id 固定为 1）
+// ============================================================================
+model SystemSetting {
+  id Int @id @default(1)
+
+  /// { provider, model, temperature, topP, maxTokens, contextRounds, systemPrompt, enableStream, enableCitation, fallbackReply }
+  model Json
+  /// { topK, threshold, rerank, rerankModel, hybrid, vectorWeight }
+  retrieval Json
+  /// { enableAuditLog, auditRetentionDays, enableSensitiveFilter, ipWhitelist, sessionTimeout }
+  security Json
+  /// { vectorStore, vectorDim, embeddingModel, maxFileSize, ocrEnabled }
+  storage Json
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+// ============================================================================
+// 操作日志（审计）
+// ============================================================================
+model OperationLog {
+  id BigInt @id @default(autoincrement())
+
+  userId   String? @map("user_id")
+  /// 操作人昵称（冗余存储，用户被删除后日志仍可读）
+  userName String? @map("user_name") @db.VarChar(64)
+  action   String  @db.VarChar(64)
+  target   String? @db.VarChar(255)
+  ip       String? @db.VarChar(64)
+  result   String? @db.VarChar(64)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  userRef User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@map("operation_logs")
+}
+
+// ============================================================================
+// 日粒度统计（供「用量统计」接口聚合，避免每次全表扫描）
+// ============================================================================
+model DailyStat {
+  id BigInt @id @default(autoincrement())
+
+  date          DateTime @unique @db.Date
+  questions     Int      @default(0)
+  hitCount      Int      @default(0) @map("hit_count")
+  avgLatency    Int      @default(0) @map("avg_latency")
+  tokens        BigInt   @default(0)
+  activeUsers   Int      @default(0) @map("active_users")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("daily_stats")
+}

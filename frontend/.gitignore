@@ -1,0 +1,19 @@
+node_modules
+dist
+dist-ssr
+.DS_Store
+*.local
+.vite
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.idea
+dev.log
+.vscode/*
+!.vscode/extensions.json
+.env.production
+# 生产构建配置（VITE_USE_MOCK/VITE_API_BASE，无敏感信息），Docker 构建依赖，必须提交
+!.env.production

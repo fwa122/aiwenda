@@ -5,5 +5,12 @@ dist
 .DS_Store
 coverage
 uploads
+# SSE 联调调试输出（curl 重定向产物）
+sse-out*.txt
+# 本地联调临时文件（请求体/ID 暂存）
+chat.json
+s.json
+convid.txt
+kbid.txt
 # seed 编译产物：Docker 构建期在容器内生成，本地不保留
 prisma/dist-seed/

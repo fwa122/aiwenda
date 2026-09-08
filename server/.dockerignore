@@ -4,3 +4,5 @@ uploads
 *.log
 .env
 .git
+# tsc 增量缓存（记录 Windows 路径，拷入容器会导致增量误判、跳过 js 输出）
+*.tsbuildinfo

@@ -1,7 +1,7 @@
 # 前端多阶段构建：Node 构建 dist → nginx 托管
 # 构建期注入 VITE_*（构建时固化），产物进镜像，服务器无需 Node 环境
 
-FROM node:22-slim AS build
+FROM node:24-slim AS build
 WORKDIR /app
 
 # 先拷依赖清单，利用 Docker 层缓存（package.json 不变时跳过 npm ci）

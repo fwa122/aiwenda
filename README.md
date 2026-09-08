@@ -8,9 +8,9 @@
 
 ## 快速开始
 
-### 方式一：Docker 全栈部署（推荐，开箱即用）
+### 方式一：使用现成镜像（推荐，免构建）
 
-整个系统打包为 6 个容器（前端 nginx / Node BFF / Python AI 服务 / Celery worker / PostgreSQL+pgvector / Redis），**只需安装 Docker，无需 Node/Python 环境**。
+镜像已发布到 Docker Hub（`gujinyi666/aiwenda-frontend` / `aiwenda-server` / `aiwenda-ai`），克隆仓库后直接拉取运行。整个系统打包为 6 个容器（前端 nginx / Node BFF / Python AI 服务 / Celery worker / PostgreSQL+pgvector / Redis），**只需安装 Docker，无需 Node/Python 环境，也不需要本地构建**（postgres/redis 用公共镜像自动拉取）。
 
 **前提**：Docker Desktop（Windows/Mac）或 Docker Engine（Linux）、git、一个智谱 API Key（[开放平台](https://open.bigmodel.cn/) 注册申请，有免费额度）。
 
@@ -34,28 +34,39 @@ cp .env.docker.example .env
 | `MOONSHOT_API_KEY` | Kimi K2.6（可选，不填则无 Kimi 模型） | Moonshot 平台申请 |
 
 ```bash
-# 3. 构建并启动（首次约 5~10 分钟；数据库迁移与 admin 播种自动完成）
-docker compose up -d --build
+# 3. 拉取镜像并启动（数据库迁移与 admin 播种自动完成）
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 浏览器访问 `http://localhost/`（云服务器用 `http://<服务器IP>/`），用 `admin / admin123` 登录后**立即改密码**。
 
-**日常运维**：
+**日常运维**（`-f docker-compose.prod.yml` 可简写，下同）：
 
 ```bash
-docker compose stop            # 停止（数据保留）
-docker compose up -d           # 再次启动（秒起）
-docker compose logs -f server  # 看服务日志（worker / ai-service 同理）
-docker compose up -d --build   # 拉取新代码后更新（数据不受影响）
-docker compose down            # 删容器（数据仍在卷中）
-docker compose down -v         # ⚠️ 连数据一起清空（重置环境才用）
+docker compose -f docker-compose.prod.yml stop            # 停止（数据保留）
+docker compose -f docker-compose.prod.yml up -d           # 再次启动（秒起）
+docker compose -f docker-compose.prod.yml logs -f server  # 看服务日志（worker / ai-service 同理）
+git pull && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d  # 更新到新版镜像
+docker compose -f docker-compose.prod.yml down            # 删容器（数据仍在卷中）
+docker compose -f docker-compose.prod.yml down -v         # ⚠️ 连数据一起清空（重置环境才用）
 ```
 
 > 数据存于命名卷 `kb-prod_pg_data` / `kb-prod_redis_data` / `kb-prod_uploads_data`。
 >
 > **国内网络拉不动基础镜像时**：`docker pull docker.m.daocloud.io/library/python:3.12-slim && docker tag docker.m.daocloud.io/library/python:3.12-slim python:3.12-slim`（`nginx:alpine`、`node:24-slim` 同理），或在 Docker Desktop 设置中配置镜像加速。
+>
+> **拉取本项目镜像（`gujinyi666/aiwenda-*`）国内网络提示**：个人镜像不在 DaoCloud 白名单，直连 `registry-1.docker.io` 超时时，需在 Docker Desktop → Settings → Resources → Proxies 配置自己的代理，或尝试支持任意路径的第三方加速器（如 `docker.1ms.run/gujinyi666/aiwenda-frontend:latest`，可用性以站点为准）。有外网条件时直接 `docker compose -f docker-compose.prod.yml pull` 即可。
 
-### 方式二：开发模式（改代码用）
+### 方式二：源码构建部署（自己改了代码时用）
+
+编排文件 [docker-compose.yml](docker-compose.yml) 与方式一服务定义完全相同，区别是前端 / BFF / AI 三个镜像从本地源码构建（数据库迁移与播种同样自动完成）：
+
+```bash
+docker compose up -d --build   # 首次约 5~10 分钟；改代码后重复执行即增量更新
+```
+
+### 方式三：开发模式（调试用）
 
 #### 一键启动（Windows）
 

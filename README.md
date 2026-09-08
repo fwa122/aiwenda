@@ -2,13 +2,62 @@
 
 基于 RAG（检索增强生成）的企业知识库问答系统。用户上传企业文档，系统完成解析、切片、向量化后，即可通过自然语言提问并获得**可溯源**的回答。
 
-> 当前阶段：**全栈已交付**。前端（Vue 3）、Node BFF（NestJS）、Python AI 服务（FastAPI + Celery）全部完成并联调通过，RAG 全链路真实跑通（解析 → 切片 → 向量化 → 混合检索 → LLM 流式生成 → 引用溯源），并已完成一轮安全专项加固。
+> 当前阶段：**全栈已交付，支持一键 Docker 部署**。前端（Vue 3）、Node BFF（NestJS）、Python AI 服务（FastAPI + Celery）全部完成并联调通过，RAG 全链路真实跑通（解析 → 切片 → 向量化 → 混合检索 → LLM 流式生成 → 引用溯源），已完成一轮安全专项加固，并提供开箱即用的 Docker Compose 全栈编排（首启自动迁移 + 播种）。
 
 ---
 
 ## 快速开始
 
-### 一键启动（Windows，推荐）
+### 方式一：Docker 全栈部署（推荐，开箱即用）
+
+整个系统打包为 6 个容器（前端 nginx / Node BFF / Python AI 服务 / Celery worker / PostgreSQL+pgvector / Redis），**只需安装 Docker，无需 Node/Python 环境**。
+
+**前提**：Docker Desktop（Windows/Mac）或 Docker Engine（Linux）、git、一个智谱 API Key（[开放平台](https://open.bigmodel.cn/) 注册申请，有免费额度）。
+
+```bash
+# 1. 获取代码
+git clone https://github.com/fwa122/aiwenda.git
+cd aiwenda
+
+# 2. 写配置（Windows 用 copy 命令）
+cp .env.docker.example .env
+```
+
+`.env` 必填项：
+
+| 变量 | 说明 | 生成方式 |
+| --- | --- | --- |
+| `POSTGRES_PASSWORD` | 数据库密码（仅容器内部使用） | `openssl rand -hex 16` |
+| `JWT_SECRET` | 登录令牌签名密钥 | `openssl rand -hex 32` |
+| `INTERNAL_TOKEN` | BFF↔AI 服务内部令牌 | `openssl rand -hex 32` |
+| `ZHIPU_API_KEY` | 智谱 API Key（生成/向量/rerank/OCR） | 开放平台控制台复制 |
+| `MOONSHOT_API_KEY` | Kimi K2.6（可选，不填则无 Kimi 模型） | Moonshot 平台申请 |
+
+```bash
+# 3. 构建并启动（首次约 5~10 分钟；数据库迁移与 admin 播种自动完成）
+docker compose up -d --build
+```
+
+浏览器访问 `http://localhost/`（云服务器用 `http://<服务器IP>/`），用 `admin / admin123` 登录后**立即改密码**。
+
+**日常运维**：
+
+```bash
+docker compose stop            # 停止（数据保留）
+docker compose up -d           # 再次启动（秒起）
+docker compose logs -f server  # 看服务日志（worker / ai-service 同理）
+docker compose up -d --build   # 拉取新代码后更新（数据不受影响）
+docker compose down            # 删容器（数据仍在卷中）
+docker compose down -v         # ⚠️ 连数据一起清空（重置环境才用）
+```
+
+> 数据存于命名卷 `kb-prod_pg_data` / `kb-prod_redis_data` / `kb-prod_uploads_data`。
+>
+> **国内网络拉不动基础镜像时**：`docker pull docker.m.daocloud.io/library/python:3.12-slim && docker tag docker.m.daocloud.io/library/python:3.12-slim python:3.12-slim`（`nginx:alpine`、`node:24-slim` 同理），或在 Docker Desktop 设置中配置镜像加速。
+
+### 方式二：开发模式（改代码用）
+
+#### 一键启动（Windows）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\start-all.ps1
@@ -20,7 +69,7 @@ powershell -ExecutionPolicy Bypass -File scripts\stop-all.ps1
 
 访问入口：前端 http://localhost:5173 · 后端 http://localhost:3000/api/v1 · AI 健康检查 http://127.0.0.1:8000/internal/health
 
-### 分模块手动启动
+#### 分模块手动启动
 
 ```bash
 # 0. 基础设施（PostgreSQL 16 + pgvector / Redis 7；MinIO 可选）
@@ -42,6 +91,8 @@ cd ai-service
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 celery -A app.tasks:celery_app worker --pool=solo --loglevel=info
 ```
+
+> 开发模式与 Docker 部署是**两套独立的数据卷**，数据不互通，请选定一套使用。
 
 ### 演示账号
 
@@ -87,8 +138,14 @@ AI问答/
 │   ├── 开发文档.md          # 架构、目录、进度、模块设计、UI 规范、踩坑记录
 │   ├── 接口文档.md          # 前后端接口契约（含 SSE 协议、内部接口、差异清单）
 │   └── 后端开发方案.md      # 架构设计、选型分析、数据库设计、实施记录
-├── docker-compose.infra.yml # kb-postgres(pgvector) + kb-redis（MinIO 可选）
-├── scripts/                 # 一键启动/停止脚本（PowerShell）
+├── docker-compose.yml       # 全栈编排：nginx + server + ai-service + worker + postgres + redis
+├── docker-compose.infra.yml # 开发模式基础设施：kb-postgres(pgvector) + kb-redis（MinIO 可选）
+├── .env.docker.example      # Docker 部署环境变量模板
+├── nginx/default.conf       # 前端托管 + /api 反代（SSE 关缓冲）
+├── frontend/Dockerfile      # 多阶段：Node 构建 dist → nginx 托管
+├── server/Dockerfile        # 多阶段：tsc + prisma generate；首启自动迁移+播种
+├── ai-service/Dockerfile    # API 与 worker 共用镜像
+├── scripts/                 # 开发模式一键启动/停止脚本（PowerShell）
 ├── server/                  # Node BFF（NestJS 12 + Prisma 6）
 │   ├── src/
 │   │   ├── auth/ user/ knowledge-base/ document/
@@ -131,4 +188,4 @@ AI问答/
 | --- | --- |
 | P3 · 效果优化 | 查询改写效果评估、专用 Rerank 模型扩展、引用高亮原文定位、答案评价闭环分析 |
 | P4 · 运营能力 | 知识库成员权限细化、审计看板、成本统计、A/B 实验 |
-| 生产化 | 全栈 Docker Compose 化（Nginx 容器托管前端 dist + 反向代理）、MinIO 对象存储接入、限流（429 + Retry-After）、解析任务对账恢复 |
+| 生产化 | MinIO 对象存储接入、限流（429 + Retry-After）、解析任务对账恢复、HTTPS（域名 + certbot）、数据库定期备份、知识库重索引接口（reindex）补全 |

@@ -43,6 +43,8 @@ export const useChatStore = defineStore('chat', {
     stageText: '',
     error: '',
     controller: null, // 流控制器
+    /** 后续问题建议（最近一轮回答 done 后异步获取，发送/切换/停止时清空） */
+    followups: [],
     /** 会话级检索参数覆盖（v0.7.0 新增） */
     retriever: {}
   }),
@@ -87,6 +89,7 @@ export const useChatStore = defineStore('chat', {
 
     async openConversation(id) {
       this.detailLoading = true
+      this.followups = [] // 历史会话不展示上一轮的追问建议
       try {
         this.currentId = id
         const detail = await chatApi.getConversation(id)
@@ -105,6 +108,7 @@ export const useChatStore = defineStore('chat', {
       this.messages = []
       this.error = ''
       this.stage = ''
+      this.followups = []
     },
 
     async renameConversation(id, title) {
@@ -161,6 +165,7 @@ export const useChatStore = defineStore('chat', {
     async sendQuestion(content, options = {}) {
       if (!content?.trim() || this.streaming) return
       this.error = ''
+      this.followups = [] // 新一轮提问开始，清掉上一轮建议
 
       // 1. 确保存在会话
       if (!this.currentId) {
@@ -263,6 +268,19 @@ export const useChatStore = defineStore('chat', {
             // 回写到 Mock 数据库，保证切换会话后消息不丢失
             await chatApi.persistMessages(this.currentId, this.messages)
             await this.fetchConversations()
+
+            // 后续问题建议：回答完成后异步获取（不阻塞主流程，失败/为空静默不展示）
+            if (!info.aborted && content.trim() && (this.messages[targetIdx]?.content || '').trim()) {
+              const convId = this.currentId
+              chatApi
+                .getFollowupSuggestions({ question: content.trim(), answer: this.messages[targetIdx].content })
+                .then((res) => {
+                  const list = (res && res.suggestions) || []
+                  // 流式已再次开始或会话已切换时丢弃旧建议
+                  if (!this.streaming && this.currentId === convId) this.followups = list.slice(0, 3)
+                })
+                .catch(() => {})
+            }
           },
           onError: (err) => {
             applyTarget((t) => {
@@ -272,7 +290,9 @@ export const useChatStore = defineStore('chat', {
             this.error = err?.message || '生成失败'
             this.streaming = false
             this.stage = ''
+            this.stageText = ''
             this.controller = null
+            this.followups = []
           }
         }
       )
@@ -284,6 +304,7 @@ export const useChatStore = defineStore('chat', {
       this.controller = null
       this.streaming = false
       this.stage = ''
+      this.followups = []
     },
 
     /** 重新生成最后一条回答 */
@@ -297,6 +318,7 @@ export const useChatStore = defineStore('chat', {
       target.content = ''
       target.status = 'streaming'
       target.sources = []
+      this.followups = []
       this.streaming = true
       this.stage = 'searching'
       this.stageText = '正在重新检索知识库…'
@@ -334,6 +356,19 @@ export const useChatStore = defineStore('chat', {
             this.controller = null
             chatApi.persistMessages(this.currentId, this.messages)
             this.fetchConversations()
+
+            // 后续问题建议：与 sendQuestion 同款降级策略
+            if (!info.aborted && userMsg.content.trim() && (target.content || '').trim()) {
+              const convId = this.currentId
+              const answer = target.content
+              chatApi
+                .getFollowupSuggestions({ question: userMsg.content.trim(), answer })
+                .then((res) => {
+                  const list = (res && res.suggestions) || []
+                  if (!this.streaming && this.currentId === convId) this.followups = list.slice(0, 3)
+                })
+                .catch(() => {})
+            }
           },
           onError: (err) => {
             target.status = 'error'
@@ -341,6 +376,7 @@ export const useChatStore = defineStore('chat', {
             this.streaming = false
             this.stage = ''
             this.controller = null
+            this.followups = []
           }
         }
       )

@@ -11,7 +11,7 @@ import { Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/current-user.decorator';
 import { ChatService, QUICK_PROMPTS, SUGGESTIONS } from './chat.service';
-import { ChatCompletionDto, CreateAttachmentsDto } from './dto/chat.dto';
+import { ChatCompletionDto, ChatSuggestionsDto, CreateAttachmentsDto } from './dto/chat.dto';
 import { SseWriter } from './sse.writer';
 
 @Controller('chat')
@@ -64,6 +64,15 @@ export class ChatController {
   @Get('suggestions')
   suggestions() {
     return SUGGESTIONS;
+  }
+
+  /**
+   * 后续问题建议：基于最近一轮问答生成 3 个追问。
+   * 与 GET /suggestions（首页推荐位）不同 method 同路径，互不影响。
+   */
+  @Post('suggestions')
+  followupSuggestions(@Body() dto: ChatSuggestionsDto) {
+    return this.chatService.followupSuggestions(dto);
   }
 
   @Get('quick-prompts')

@@ -289,6 +289,23 @@ export function getSuggestedQuestions() {
   return request({ url: '/v1/chat/suggestions', method: 'get' })
 }
 
+/**
+ * 后续问题建议：基于最近一轮问答生成 3 个追问（回答 done 后异步调用）。
+ * 失败/为空时前端静默不展示；mock 模式返回固定建议便于演示。
+ */
+export function getFollowupSuggestions(payload) {
+  if (USE_MOCK) {
+    return mockOk({
+      suggestions: [
+        '能结合具体案例再说明一下吗？',
+        '实际使用中有哪些注意事项？',
+        '接下来建议我深入了解哪部分？'
+      ]
+    }, 150)
+  }
+  return request({ url: '/v1/chat/suggestions', method: 'post', data: payload })
+}
+
 /** 快捷引导词 */
 export function getQuickPrompts() {
   if (USE_MOCK) return mockOk(clone(mockQuickPrompts), 100)

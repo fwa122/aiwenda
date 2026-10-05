@@ -78,6 +78,13 @@
           @feedback="handleFeedback"
         />
 
+        <!-- 后续问题建议：最新一条助手消息下方，点击直接发送 -->
+        <div v-if="showFollowups" class="followups">
+          <button v-for="q in chatStore.followups" :key="q" class="followup-chip" @click="handleFollowup(q)">
+            <el-icon :size="12"><ChatLineRound /></el-icon>{{ q }}
+          </button>
+        </div>
+
         <div v-if="chatStore.error" class="error-bar">
           <el-icon :size="14"><WarningFilled /></el-icon>
           {{ chatStore.error }}
@@ -96,6 +103,7 @@
     <footer class="chat-footer">
       <div class="footer-inner">
         <ChatInput
+          ref="chatInputRef"
           v-model="input"
           :streaming="chatStore.streaming"
           :disabled="chatStore.streaming"
@@ -128,7 +136,7 @@
 
     <!-- 引用来源预览抽屉 -->
     <el-drawer v-model="previewVisible" :title="preview?.docName || '原文片段'" size="440px">
-      <div v-if="preview" class="preview">
+      <div v-if="preview" ref="previewRef" class="preview">
         <div class="preview-meta">
           <DocTypeIcon :type="preview.docType" />
           <el-tag size="small" effect="plain">{{ preview.kbName }}</el-tag>
@@ -138,7 +146,11 @@
           </el-tag>
         </div>
 
-        <div class="preview-content md-body">{{ preview.snippet }}</div>
+        <div
+          ref="previewContentRef"
+          class="preview-content md-body"
+          @mouseup="handlePreviewMouseUp"
+        >{{ preview.snippet }}</div>
 
         <el-divider content-position="left">片段信息</el-divider>
         <el-descriptions :column="1" size="small" border>
@@ -150,8 +162,21 @@
         </el-descriptions>
 
         <p class="preview-tip">
-          提示：正式版本将在此处展示原文高亮定位与前后文片段（支持跳转到原文档对应页码）。
+          提示：选中上方片段文字，可直接「解释 / 翻译 / 就这段提问」（PDF 预览暂不支持划词）。
+          正式版本将在此处展示原文高亮定位与前后文片段（支持跳转到原文档对应页码）。
         </p>
+
+        <!-- 划词浮动操作条（绝对定位于预览容器内，坐标取选区相对位置） -->
+        <div
+          v-if="selBar.visible"
+          class="sel-bar"
+          :style="{ top: `${selBar.top}px`, left: `${selBar.left}px` }"
+          @mousedown.prevent
+        >
+          <button class="sel-btn" @click="quoteAction('explain')">解释这段</button>
+          <button class="sel-btn" @click="quoteAction('translate')">翻译这段</button>
+          <button class="sel-btn" @click="quoteAction('ask')">就这段提问</button>
+        </div>
       </div>
     </el-drawer>
   </div>
@@ -183,9 +208,15 @@ const modelOptions = llmModels
 const kbOptions = computed(() => knowledgeStore.options)
 const atBottom = ref(true)
 const scrollRef = ref(null)
+const chatInputRef = ref(null)
 
 const previewVisible = ref(false)
 const preview = ref(null)
+/* ===== 划词追问（预览抽屉）：选区浮动操作条 ===== */
+const previewRef = ref(null)
+const previewContentRef = ref(null)
+const selBar = ref({ visible: false, top: 0, left: 0 })
+let selectedText = ''
 
 const title = computed(() =>
   chatStore.currentId ? chatStore.current?.title || '新对话' : '新对话'
@@ -207,13 +238,35 @@ const lastAssistantIdx = computed(() => {
   return -1
 })
 
+/** 后续问题建议：仅最新消息为已完成的助手回答且非流式时展示 */
+const showFollowups = computed(() => {
+  if (chatStore.streaming || !chatStore.followups.length) return false
+  const last = chatStore.messages.at(-1)
+  return last?.role === 'assistant' && last?.status === 'done'
+})
+
 onMounted(async () => {
+  // 划词追问全局监听：document 级捕获（滚动不冒泡），回调内部以抽屉可见性短路
+  document.addEventListener('mousedown', onDocMouseDown)
+  document.addEventListener('scroll', onDocScroll, true)
+  document.addEventListener('selectionchange', onDocSelectionChange)
+
   await knowledgeStore.fetchOptions()
   if (!kbIds.value.length) {
     kbIds.value = kbOptions.value.filter((k) => k.status === 'ready').slice(0, 1).map((k) => k.id)
   }
   await syncFromRoute(route.params.id)
   scrollToBottom()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocMouseDown)
+  document.removeEventListener('scroll', onDocScroll, true)
+  document.removeEventListener('selectionchange', onDocSelectionChange)
+})
+
+watch(previewVisible, (v) => {
+  if (!v) hideSelBar()
 })
 
 watch(
@@ -394,6 +447,115 @@ function handleFeedback(msgId, type) {
 function handlePreview(source) {
   preview.value = source
   previewVisible.value = true
+}
+
+/* ===== 划词追问（预览抽屉内） ===== */
+
+/** 隐藏浮动操作条并清空选中文本 */
+function hideSelBar() {
+  selBar.value.visible = false
+  selectedText = ''
+}
+
+/** 容器 mouseup：选区非空且落在片段内容区时，在选区附近显示操作条 */
+function handlePreviewMouseUp() {
+  if (!previewVisible.value) return
+  const container = previewContentRef.value
+  const sel = window.getSelection()
+  const text = (sel?.toString() || '').trim()
+  if (!container || !sel || sel.isCollapsed || !text || !container.contains(sel.anchorNode)) {
+    hideSelBar()
+    return
+  }
+  let rect
+  try {
+    rect = sel.getRangeAt(0).getBoundingClientRect()
+  } catch (e) {
+    return
+  }
+  if (!rect || (!rect.width && !rect.height)) return
+  // 坐标取「选区 − 容器」差值：两者同受抽屉滚动影响，差值即容器内的静态偏移
+  const host = previewRef.value
+  if (!host) return
+  const hostRect = host.getBoundingClientRect()
+  const BAR_W = 216
+  const BAR_H = 32
+  let top = rect.top - hostRect.top - BAR_H - 8
+  if (top < 0) top = rect.bottom - hostRect.top + 8 // 贴顶时放到选区下方
+  let left = rect.left - hostRect.left + rect.width / 2 - BAR_W / 2
+  left = Math.min(Math.max(left, 4), Math.max(hostRect.width - BAR_W - 4, 4))
+  selectedText = text
+  selBar.value = { visible: true, top: Math.max(top, 0), left: Math.max(left, 4) }
+}
+
+/** 点击操作条以外任意处隐藏（操作条自身 @mousedown.prevent 防止选区塌陷） */
+function onDocMouseDown(e) {
+  if (!selBar.value.visible) return
+  const inBar = e.target instanceof Element && e.target.closest?.('.sel-bar')
+  if (!inBar) hideSelBar()
+}
+
+/** 抽屉滚动时选区位置失效，直接隐藏 */
+function onDocScroll() {
+  if (selBar.value.visible) hideSelBar()
+}
+
+/** 选区被清空（如 Ctrl 取消选择）时隐藏 */
+function onDocSelectionChange() {
+  if (!selBar.value.visible) return
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed) hideSelBar()
+}
+
+/** 中英文粗判：用于翻译方向（CJK 字符数 ≥ 拉丁字母数则视为中文） */
+function isMostlyChinese(text) {
+  const cjk = (text.match(/[\u4e00-\u9fff]/g) || []).length
+  const latin = (text.match(/[A-Za-z]/g) || []).length
+  return cjk >= latin
+}
+
+/** 选中文本 → 引用块消息（后端零改动，回答天然带文档上下文） */
+function buildQuotedMessage(action, text) {
+  const docName = preview.value?.docName || '当前文档'
+  const quote = text
+    .split('\n')
+    .map((l) => `> ${l.trim()}`)
+    .filter((l) => l.trim() !== '>')
+    .join('\n')
+  if (action === 'explain') {
+    return `请解释下面这段内容（出自《${docName}》）：\n\n${quote}\n\n要求：用通俗易懂的中文解释这段话的含义，涉及专业术语时先一句话定义再展开。`
+  }
+  if (action === 'translate') {
+    const target = isMostlyChinese(text) ? '英文' : '中文'
+    return `请把下面这段内容翻译成${target}（出自《${docName}》）：\n\n${quote}\n\n要求：忠实原意、译文通顺自然，直接给出译文。`
+  }
+  return `请结合《${docName}》中下面这段内容回答我的问题：\n\n${quote}\n\n我的问题：`
+}
+
+/** 划词操作条点击：解释/翻译直接发送，提问则注入输入框由用户补全 */
+function quoteAction(action) {
+  const text = selectedText
+  if (!text) return
+  hideSelBar()
+  previewVisible.value = false
+  if (action === 'ask') {
+    input.value = buildQuotedMessage('ask', text)
+    nextTick(() => chatInputRef.value?.focus())
+    return
+  }
+  if (chatStore.streaming) {
+    ElMessage.warning('正在生成回答，请稍候再提问')
+    return
+  }
+  handleSend({ content: buildQuotedMessage(action, text) })
+}
+
+/* ===== 后续问题建议 ===== */
+
+/** 点击建议：清空建议并直接以该问题发送 */
+function handleFollowup(question) {
+  chatStore.followups = []
+  handleSend({ content: question })
 }
 
 async function handleRename() {
@@ -650,6 +812,10 @@ function handleExport() {
 }
 
 /* 预览抽屉 */
+.preview {
+  position: relative; /* 划词操作条的定位基准 */
+}
+
 .preview-meta {
   display: flex;
   flex-wrap: wrap;
@@ -673,6 +839,64 @@ function handleExport() {
   margin-top: 16px;
   font-size: 12px;
   color: var(--c-text-4);
+}
+
+/* 划词浮动操作条 */
+.sel-bar {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow);
+}
+
+.sel-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.sel-btn:hover {
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+/* 后续问题建议 chips */
+.followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 0 16px 40px;
+}
+
+.followup-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  color: var(--c-text-2);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.followup-chip:hover {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: var(--brand);
 }
 
 /* 拖拽导入遮罩 */

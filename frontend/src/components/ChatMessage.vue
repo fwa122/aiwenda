@@ -114,7 +114,7 @@ const showStage = computed(() => isStreaming.value && !props.message.content)
 
 const renderedHtml = computed(() => renderMarkdown(props.message.content || ''))
 
-/** 内容区点击委托：内联引用徽标 [n] → 打开来源预览；代码复制按钮 → 复制代码 */
+/** 内容区点击委托：内联引用徽标 [n] → 打开来源预览；代码/表格复制按钮 → 复制内容 */
 function handleContentClick(e) {
   const target = e.target
   if (target?.classList?.contains('cite')) {
@@ -125,8 +125,38 @@ function handleContentClick(e) {
   }
   if (target?.classList?.contains('code-copy')) {
     const code = target.parentElement?.querySelector('pre code')?.textContent || ''
-    if (code) copyText(code)
+    if (code) {
+      copyText(code)
+      flashCopied(target)
+    }
+    return
   }
+  if (target?.classList?.contains('table-copy')) {
+    const table = target.parentElement?.querySelector('table')
+    if (table) {
+      copyText(tableToText(table))
+      flashCopied(target)
+    }
+  }
+}
+
+/** 表格 → 纯文本（单元格制表符分隔、行换行分隔） */
+function tableToText(table) {
+  return Array.from(table.rows || [])
+    .map((tr) => Array.from(tr.cells || []).map((c) => (c.textContent || '').trim()).join('\t'))
+    .join('\n')
+}
+
+/** 按钮短暂变为「已复制」（data 标记防止连点期间重复触发还原） */
+function flashCopied(btn) {
+  if (btn.dataset.copyFlash) return
+  btn.dataset.copyFlash = '1'
+  const original = btn.textContent
+  btn.textContent = '已复制'
+  setTimeout(() => {
+    btn.textContent = original
+    delete btn.dataset.copyFlash
+  }, 1200)
 }
 
 async function copyText(text) {

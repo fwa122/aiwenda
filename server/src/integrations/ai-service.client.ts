@@ -154,6 +154,32 @@ export class AiServiceClient {
   }
 
   /**
+   * 后续问题建议：glm-4-flash 轻量生成 3 个追问。
+   * 任何失败（AI 服务不可用/超时/解析异常）静默返回空数组，前端不展示即可。
+   */
+  async chatSuggestions(payload: { question: string; answer: string }): Promise<{ suggestions: string[] }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/internal/chat/suggestions`, {
+        method: 'POST',
+        headers: this.authHeaders(),
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!res.ok) return { suggestions: [] };
+      const data: any = await res.json();
+      const list: any[] = Array.isArray(data?.suggestions) ? data.suggestions : [];
+      return {
+        suggestions: list
+          .filter((s) => typeof s === 'string' && s.trim())
+          .map((s) => s.trim())
+          .slice(0, 3),
+      };
+    } catch {
+      return { suggestions: [] };
+    }
+  }
+
+  /**
    * 流式问答。返回 SSE 事件异步迭代器。
    * - mock 模式：内置假流
    * - 真实模式：转发 Python /internal/chat 的 SSE

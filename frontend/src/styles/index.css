@@ -335,12 +335,14 @@ button {
   background: var(--brand);
 }
 
-/* 代码块容器与复制按钮 */
-.md-body .code-block {
+/* 代码块 / 表格容器与复制按钮 */
+.md-body .code-block,
+.md-body .table-block {
   position: relative;
 }
 
-.md-body .code-block .code-copy {
+.md-body .code-block .code-copy,
+.md-body .table-block .table-copy {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -356,16 +358,22 @@ button {
   transition: all 0.16s;
 }
 
-.md-body .code-block:hover .code-copy {
+.md-body .code-block:hover .code-copy,
+.md-body .table-block:hover .table-copy {
   opacity: 1;
 }
 
-.md-body .code-block .code-copy:hover {
+.md-body .code-block .code-copy:hover,
+.md-body .table-block .table-copy:hover {
   color: var(--brand);
   border-color: var(--brand);
 }
 
 .md-body .code-block pre {
+  margin: 12px 0;
+}
+
+.md-body .table-block table {
   margin: 12px 0;
 }
 

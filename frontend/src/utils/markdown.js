@@ -54,6 +54,21 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   return `<div class="code-block"><button class="code-copy" type="button">复制</button>${raw}</div>`
 }
 
+/* --------------------------------------------------------------------------
+   表格：同款包裹复制按钮（复制为纯文本：单元格 \t 分隔、行 \n 分隔）。
+   注意：markdown-it 渲染表格走的是 table_open / table_close 两个 token 规则，
+   不存在被调用的 'table' 键——包裹必须成对挂在 open/close 上（渲染期生成
+   HTML 字符串而非 DOM 操作，流式重渲染整体替换，天然不重复包裹）
+   -------------------------------------------------------------------------- */
+// markdown-it 对 table_open/table_close 无默认渲染器（undefined），需 fallback 到
+// 内置的 renderToken，否则解构调用抛 TypeError（本项目安装版本实测如此）
+const defaultTableOpen =
+  md.renderer.rules.table_open || ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options))
+md.renderer.rules.table_open = (...args) =>
+  `<div class="table-block"><button class="table-copy" type="button">复制</button>${defaultTableOpen(...args)}`
+const defaultTableClose = md.renderer.rules.table_close || (() => '')
+md.renderer.rules.table_close = (...args) => `${defaultTableClose(...args)}</div>`
+
 // 强制带 target 的链接补 rel，防 _blank 反向标签劫持（tabnabbing）
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'A' && node.getAttribute('target')) {

@@ -18,10 +18,31 @@
         :disabled="disabled"
         rows="1"
         @focus="focused = true"
-        @blur="focused = false"
+        @blur="onBlur"
         @keydown="handleKeydown"
-        @input="autoResize"
+        @input="handleInput"
       />
+
+      <!-- 「/」快捷指令面板（自定义浮层，非 Element 弹层，避免影响检索设置 popover） -->
+      <div v-if="slashOpen" class="slash-pop">
+        <div class="slash-head">
+          <span>快捷指令</span>
+          <span class="slash-keys">↑↓ 选择 · Enter 确认 · Esc 关闭</span>
+        </div>
+        <div
+          v-for="(c, i) in slashFiltered"
+          :key="c.label"
+          class="slash-item"
+          :class="{ active: i === slashIndex }"
+          @mousedown.prevent
+          @mouseenter="slashIndex = i"
+          @click="applyCommand(c)"
+        >
+          <span class="slash-label">/{{ c.label }}</span>
+          <span class="slash-desc">{{ c.desc }}</span>
+        </div>
+        <div v-if="!slashFiltered.length" class="slash-empty">没有匹配的指令</div>
+      </div>
 
       <div class="toolbar">
         <div class="toolbar-left">
@@ -226,10 +247,96 @@ function autoResize() {
 }
 
 function handleKeydown(e) {
+  // 「/」指令面板打开时优先接管导航键
+  if (slashOpen.value) {
+    const count = slashFiltered.value.length
+    if (e.key === 'ArrowDown' && count) {
+      e.preventDefault()
+      slashIndex.value = (slashIndex.value + 1) % count
+      return
+    }
+    if (e.key === 'ArrowUp' && count) {
+      e.preventDefault()
+      slashIndex.value = (slashIndex.value - 1 + count) % count
+      return
+    }
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault()
+      const item = slashFiltered.value[slashIndex.value]
+      if (item) applyCommand(item)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeSlash()
+      return
+    }
+  }
+  // 输入框为空时按下「/」打开指令面板（不拦截默认输入，随 input 事件同步过滤词）
+  if (e.key === '/' && !(inner.value || '').length) {
+    slashOpen.value = true
+    slashQuery.value = ''
+    slashIndex.value = 0
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     handleSend()
   }
+}
+
+/* ===== 「/」快捷指令面板（模板数组常量，可按需扩展） ===== */
+const COMMAND_TEMPLATES = [
+  { label: '总结全文', desc: '针对当前知识库总结核心内容', text: '请总结当前知识库的全部内容，先给出一句话概述，再用要点列出核心信息' },
+  { label: '列出核心要点', desc: '提炼最重要的信息', text: '请列出当前知识库内容的核心要点，不超过 10 条，按重要程度排序' },
+  { label: '出 5 道自测题', desc: '生成练习题检验掌握程度', text: '基于当前知识库内容出 5 道自测题，覆盖不同知识点，并在最后附上参考答案' },
+  { label: '翻译这段', desc: '在下方粘贴要翻译的内容', text: '请把下面这段内容翻译（中文译英文 / 英文译中文，按内容自动判断）：\n\n' },
+  { label: '解释这段', desc: '在下方粘贴要解释的内容', text: '请用通俗易懂的语言解释下面这段内容：\n\n' },
+  { label: '举个例子', desc: '用具体示例辅助理解', text: '请针对前面回答的内容举一个具体的例子，帮助我更好理解' },
+  { label: '还有什么我没问到的', desc: '发现可能遗漏的问题', text: '基于前面的对话，还有哪些重要但我没有问到的内容？请列出来并简要说明为什么值得关注' }
+]
+
+const slashOpen = ref(false)
+const slashQuery = ref('')
+const slashIndex = ref(0)
+
+const slashFiltered = computed(() => {
+  const q = slashQuery.value.trim().toLowerCase()
+  if (!q) return COMMAND_TEMPLATES
+  return COMMAND_TEMPLATES.filter((c) => `${c.label}${c.desc}`.toLowerCase().includes(q))
+})
+
+function closeSlash() {
+  slashOpen.value = false
+  slashQuery.value = ''
+  slashIndex.value = 0
+}
+
+function handleInput() {
+  autoResize()
+  // 面板打开时按「/」后的字符过滤；「/」被删掉则关闭
+  if (slashOpen.value) {
+    if (inner.value.startsWith('/')) {
+      slashQuery.value = inner.value.slice(1)
+      slashIndex.value = 0
+    } else {
+      closeSlash()
+    }
+  }
+}
+
+function onBlur() {
+  focused.value = false
+  closeSlash()
+}
+
+/** 选中指令：模板文本替换掉「/xxx」并聚焦输入框 */
+function applyCommand(item) {
+  inner.value = item.text
+  closeSlash()
+  nextTick(() => {
+    autoResize()
+    textareaRef.value?.focus()
+  })
 }
 
 const hasRetrieverOverride = computed(() =>
@@ -307,6 +414,7 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 }
 
 .input-box {
+  position: relative; /* 「/」指令面板的定位基准 */
   padding: 10px 12px 8px;
   background: var(--c-bg);
   border: 1px solid var(--c-border);
@@ -492,6 +600,72 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 .hint {
   margin-top: 10px;
   font-size: 11.5px;
+  text-align: center;
+  color: var(--c-text-4);
+}
+
+/* 「/」快捷指令面板（悬浮于输入框上方） */
+.slash-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 60;
+  width: 100%;
+  max-height: 300px;
+  padding: 6px;
+  overflow-y: auto;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.slash-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text);
+  border-bottom: 1px solid var(--c-border-soft);
+}
+
+.slash-keys {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--c-text-4);
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 8px;
+  font-size: 13px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.slash-item.active {
+  background: var(--brand-soft);
+}
+
+.slash-label {
+  font-weight: 500;
+  color: var(--brand);
+}
+
+.slash-desc {
+  font-size: 11.5px;
+  color: var(--c-text-4);
+  text-align: right;
+}
+
+.slash-empty {
+  padding: 12px 8px;
+  font-size: 12px;
   text-align: center;
   color: var(--c-text-4);
 }

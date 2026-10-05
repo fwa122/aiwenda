@@ -82,3 +82,14 @@ export class CreateAttachmentsDto {
   @Type(() => AttachmentItemDto)
   files: AttachmentItemDto[];
 }
+
+/** 后续问题建议入参：基于最近一轮问答生成 3 个追问（answer 由 AI 服务截断至 2000 字） */
+export class ChatSuggestionsDto {
+  @IsString()
+  @MaxLength(2000)
+  question: string;
+
+  @IsString()
+  @MaxLength(4000)
+  answer: string;
+}

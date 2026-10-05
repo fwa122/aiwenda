@@ -14,7 +14,7 @@ import { canReadKb } from '../common/kb-access';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiServiceClient, AiSseEvent } from '../integrations/ai-service.client';
 import { ConversationService, SourceView } from '../conversation/conversation.service';
-import { ChatCompletionDto } from './dto/chat.dto';
+import { ChatCompletionDto, ChatSuggestionsDto } from './dto/chat.dto';
 import { SseWriter } from './sse.writer';
 
 /** 首页推荐问题 / 快捷引导词（静态配置，结构与前端 Mock 一致） */
@@ -110,6 +110,11 @@ export class ChatService {
         ? '当前模型由服务端（ai-service/.env）配置，暂不支持前端切换'
         : 'AI 服务不可用，无法获取模型信息',
     };
+  }
+
+  /** 后续问题建议：转发 AI 服务（失败由 client 静默降级为空数组） */
+  async followupSuggestions(dto: ChatSuggestionsDto): Promise<{ suggestions: string[] }> {
+    return this.ai.chatSuggestions({ question: dto.question, answer: dto.answer });
   }
 
   /** SSE 问答主流程 */

@@ -1,4 +1,5 @@
 """内部接口：解析任务入队、检索、SSE 问答"""
+import json
 import re
 import secrets
 import time
@@ -315,3 +316,42 @@ def chat(body: ChatRequest):
             yield sse('error', {'message': str(exc)[:300]})
 
     return StreamingResponse(gen(), media_type='text/event-stream')
+
+
+# 后续问题建议：轻量模型低 token 生成，解析失败/异常一律返回空数组（前端静默降级）
+SUGGESTION_ANSWER_MAX_CHARS = 2000
+SUGGESTION_SYSTEM_PROMPT = (
+    '你是对话后续问题推荐器。根据给定的对话内容（用户提问与助手回答），'
+    '站在用户角度生成 3 个可能继续追问的问题：可深入挖掘回答要点、从不同角度延伸、'
+    '或追问关键细节。每个问题不超过 25 个字，用中文。'
+    '只输出一个 JSON 字符串数组，例如 ["问题1","问题2","问题3"]，不要输出任何其他内容。'
+)
+
+
+class SuggestionsRequest(BaseModel):
+    question: str = ''
+    answer: str = ''
+
+
+@router.post('/chat/suggestions')
+def chat_suggestions(body: SuggestionsRequest):
+    """后续问题建议：glm-4-flash 低 max_tokens 生成 3 个追问；任何异常返回空数组"""
+    try:
+        question = (body.question or '').strip()[:1000]
+        answer = (body.answer or '').strip()[:SUGGESTION_ANSWER_MAX_CHARS]
+        if not question and not answer:
+            return {'suggestions': []}
+        messages: list[dict] = [{'role': 'system', 'content': SUGGESTION_SYSTEM_PROMPT}]
+        messages.append({'role': 'user', 'content': f'用户提问：{question}\n\n助手回答：{answer}'})
+        text = llm.chat_once(messages, model='glm-4-flash', temperature=0.8, max_tokens=200)
+        match = re.search(r'\[[\s\S]*\]', text or '')
+        if not match:
+            return {'suggestions': []}
+        data = json.loads(match.group(0))
+        if not isinstance(data, list):
+            return {'suggestions': []}
+        items = [str(s).strip() for s in data if str(s).strip()][:3]
+        return {'suggestions': items}
+    except Exception as exc:  # noqa: BLE001
+        print(f'[chat] 后续问题建议生成失败: {exc}')
+        return {'suggestions': []}

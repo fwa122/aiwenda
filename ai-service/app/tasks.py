@@ -81,13 +81,20 @@ def parse_document(self, doc_id: str):
             ('parsed', 100, len(chunks), doc_id),
         )
 
-        # 5. 知识库计数 + 草稿转就绪
+        # 5. 知识库计数 + 状态自愈：仅当库内已无任何进行中的文档时才归位 ready，
+        #    防止"最后一个任务完成后又被并发的入库/重建请求打回 indexing"的乱序问题
         execute(
             """UPDATE knowledge_bases
                SET chunk_count = (SELECT COUNT(*) FROM chunks WHERE kb_id = %s),
-                   status = CASE WHEN status IN ('draft', 'indexing') THEN 'ready' ELSE status END
+                   status = CASE
+                       WHEN EXISTS (
+                           SELECT 1 FROM documents
+                           WHERE kb_id = %s AND status IN ('pending', 'parsing', 'indexing')
+                       ) THEN status
+                       ELSE 'ready'
+                   END
                WHERE id = %s""",
-            (kb_id, kb_id),
+            (kb_id, kb_id, kb_id),
         )
         return {'ok': True, 'docId': doc_id, 'chunks': len(chunks)}
     except ValueError as exc:

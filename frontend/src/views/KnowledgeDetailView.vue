@@ -89,7 +89,9 @@
                 <template #default="{ row }">
                   <div class="doc-cell">
                     <DocTypeIcon :type="row.type" />
-                    <span class="doc-name text-ellipsis">{{ row.name }}</span>
+                    <el-tooltip :content="row.name" placement="top" :show-after="300" :hide-after="0">
+                      <span class="doc-name text-ellipsis">{{ row.name }}</span>
+                    </el-tooltip>
                   </div>
                 </template>
               </el-table-column>
@@ -116,8 +118,10 @@
               <el-table-column label="更新时间" width="160">
                 <template #default="{ row }">{{ fromNow(row.updatedAt) }}</template>
               </el-table-column>
-              <el-table-column label="操作" width="170" fixed="right">
+              <el-table-column label="操作" width="250" fixed="right">
                 <template #default="{ row }">
+                  <el-button link type="primary" size="small" @click="openPreview(row)">预览</el-button>
+                  <el-button link type="primary" size="small" @click="handleDownload(row)">下载</el-button>
                   <el-button link type="primary" size="small" @click="openChunks(row)">切片</el-button>
                   <el-button link type="primary" size="small" @click="handleReparse(row)">重解析</el-button>
                   <el-button link type="danger" size="small" @click="handleDeleteDoc(row)">删除</el-button>
@@ -313,15 +317,45 @@
       </div>
       <el-empty v-else description="该文档暂无切片数据" />
     </el-drawer>
+
+    <!-- 文档预览抽屉：PDF 走 iframe 渲染，文本类直接展示，其余格式引导下载 -->
+    <el-drawer
+      v-model="previewVisible"
+      :title="previewDoc?.name || '文档预览'"
+      size="62%"
+      @closed="closePreview"
+    >
+      <div v-loading="previewLoading" class="doc-preview">
+        <template v-if="previewDoc">
+          <iframe
+            v-if="previewDoc.kind === 'pdf'"
+            :src="previewDoc.url"
+            style="width: 100%; height: 100%; min-height: 70vh; border: none; border-radius: 8px"
+          />
+          <div v-else-if="previewDoc.kind === 'text'" class="text-frame">
+            <div v-if="previewDoc.html" class="md-body" v-html="previewDoc.html" />
+            <pre v-else class="plain-text">{{ previewDoc.plain }}</pre>
+          </div>
+          <div v-else class="preview-fallback">
+            <el-empty description="该格式暂不支持在线预览" :image-size="90" />
+            <el-button type="primary" size="small" @click="handleDownload(previewDoc)">
+              下载后查看
+            </el-button>
+          </div>
+        </template>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useKnowledgeStore } from '@/store'
-import { retrievalTest, getDocumentChunks } from '@/api/knowledge'
+import { retrievalTest, getDocumentChunks, fetchDocumentFile, downloadDocument } from '@/api/knowledge'
+import { watchKb, stopWatch } from '@/composables/useParseWatcher'
+import { renderMarkdown } from '@/utils/markdown'
 import { getUsageStats } from '@/api/user'
 import { kbStatusMap, docStatusMap, embeddingModels, parserOptions, llmModels } from '@/mock/knowledge'
 import { formatSize, formatNumber, fromNow } from '@/utils/format'
@@ -366,14 +400,25 @@ watch(docKeyword, () => {
   docTimer = setTimeout(loadDocs, 300)
 })
 
+/** 本页面启动的解析监听，离开页面时清理 */
+const watchedKbIds = new Set()
+onBeforeUnmount(() => watchedKbIds.forEach((id) => stopWatch(id)))
+
 async function customUpload(options) {
   uploading.value = true
   uploadPercent.value = 0
   try {
-    await knowledgeStore.upload(route.params.id, [options.file], (p) => {
+    const docs = await knowledgeStore.upload(route.params.id, [options.file], (p) => {
       uploadPercent.value = p
     })
     ElMessage.success('上传成功，后台正在解析')
+    // 解析完成后应用内 + 浏览器通知（浏览器通知权限由聊天页拖拽 / 列表页导入的手势统一请求）
+    watchKb(
+      route.params.id,
+      docs.map((d) => d.id),
+      { names: Object.fromEntries(docs.map((d) => [d.id, d.name])) }
+    )
+    watchedKbIds.add(route.params.id)
     options.onSuccess?.()
   } catch (e) {
     options.onError?.(e)
@@ -434,6 +479,55 @@ async function openChunks(row) {
   chunkVisible.value = true
 }
 
+/* ---------------- 预览 / 下载 ---------------- */
+const previewVisible = ref(false)
+const previewLoading = ref(false)
+const previewDoc = ref(null)
+
+/** 预览方式：pdf 用 iframe 原生渲染；md/txt/csv 读文本渲染；其余仅提供下载 */
+function previewKind(type) {
+  const t = (type || '').toLowerCase()
+  if (t === 'pdf') return 'pdf'
+  if (['md', 'txt', 'csv'].includes(t)) return 'text'
+  return 'other'
+}
+
+async function openPreview(row) {
+  previewVisible.value = true
+  previewLoading.value = true
+  previewDoc.value = { id: row.id, name: row.name, type: row.type, kind: previewKind(row.type) }
+  try {
+    const blob = await fetchDocumentFile(row.id)
+    if (previewDoc.value.kind === 'pdf') {
+      previewDoc.value.url = URL.createObjectURL(blob)
+    } else if (previewDoc.value.kind === 'text') {
+      const text = await blob.text()
+      previewDoc.value.html =
+        previewDoc.value.type.toLowerCase() === 'md' ? renderMarkdown(text) : null
+      if (!previewDoc.value.html) previewDoc.value.plain = text
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '文件加载失败')
+    previewVisible.value = false
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function closePreview() {
+  if (previewDoc.value?.url) URL.revokeObjectURL(previewDoc.value.url)
+  previewDoc.value = null
+}
+
+async function handleDownload(row) {
+  try {
+    await downloadDocument(row.id, row.name)
+    ElMessage.success('已开始下载')
+  } catch (e) {
+    ElMessage.error(e.message || '下载失败')
+  }
+}
+
 /* ---------------- 检索测试 ---------------- */
 const query = ref('')
 const retrieving = ref(false)
@@ -488,12 +582,12 @@ function resetConfigForm() {
     parser: data.parser,
     chunkSize: data.chunkSize,
     chunkOverlap: data.chunkOverlap,
-    topK: data.retriever.topK,
-    threshold: data.retriever.threshold,
-    rerank: data.retriever.rerank,
-    hybrid: data.retriever.hybrid,
-    llmModel: data.llm.model,
-    temperature: data.llm.temperature
+    topK: data.retriever?.topK,
+    threshold: data.retriever?.threshold,
+    rerank: data.retriever?.rerank,
+    hybrid: data.retriever?.hybrid,
+    llmModel: data.llm?.model,
+    temperature: data.llm?.temperature
   })
 }
 
@@ -544,9 +638,9 @@ onMounted(async () => {
   resetConfigForm()
   if (kb.value) {
     Object.assign(retrieval, {
-      topK: kb.value.retriever.topK,
-      threshold: kb.value.retriever.threshold,
-      rerank: kb.value.retriever.rerank
+      topK: kb.value.retriever?.topK,
+      threshold: kb.value.retriever?.threshold,
+      rerank: kb.value.retriever?.rerank
     })
   }
   await loadDocs()
@@ -896,5 +990,71 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.8;
   color: var(--c-text-2);
+}
+
+/* 文档预览抽屉 */
+.doc-preview {
+  height: 100%;
+}
+
+.text-frame {
+  max-height: 100%;
+  overflow: auto;
+  padding: 4px 6px;
+}
+
+.text-frame .plain-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--c-text-1);
+}
+
+.text-frame .md-body {
+  font-size: 14px;
+  line-height: 1.9;
+  color: var(--c-text-1);
+}
+
+.text-frame .md-body h1,
+.text-frame .md-body h2,
+.text-frame .md-body h3 {
+  margin: 18px 0 10px;
+  line-height: 1.4;
+}
+
+.text-frame .md-body p,
+.text-frame .md-body ul,
+.text-frame .md-body ol,
+.text-frame .md-body pre {
+  margin: 10px 0;
+}
+
+.text-frame .md-body code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--c-bg-soft, rgba(127, 127, 127, 0.12));
+  font-size: 13px;
+}
+
+.text-frame .md-body table {
+  border-collapse: collapse;
+  margin: 10px 0;
+}
+
+.text-frame .md-body th,
+.text-frame .md-body td {
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  padding: 6px 10px;
+}
+
+.preview-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-top: 12vh;
 }
 </style>

@@ -74,15 +74,15 @@
             @change="onFilePicked"
           />
 
-          <!-- 检索设置 -->
-          <el-popover placement="top-start" :width="296" trigger="click">
-            <template #reference>
-              <el-tooltip content="检索设置" placement="top">
-                <button class="icon-btn" :class="{ active: hasRetrieverOverride }">
-                  <el-icon :size="15"><Operation /></el-icon>
-                </button>
-              </el-tooltip>
-            </template>
+          <!-- 检索设置：tooltip 与 popover 各自直接绑定到同一个按钮（virtual-ref），
+               不能把 el-tooltip 套进 #reference —— 组件嵌套会导致 popover 弹层永远 display:none -->
+          <el-popover
+            placement="top-start"
+            :width="296"
+            trigger="click"
+            :virtual-ref="retrieverBtnRef"
+            virtual-triggering
+          >
 
             <div class="ret-pop">
               <div class="ret-head">
@@ -142,6 +142,11 @@
               <p class="ret-tip">调整后对下一次提问生效，优先于知识库默认配置。</p>
             </div>
           </el-popover>
+          <el-tooltip content="检索设置" placement="top">
+            <button ref="retrieverBtnRef" class="icon-btn" :class="{ active: hasRetrieverOverride }">
+              <el-icon :size="15"><Operation /></el-icon>
+            </button>
+          </el-tooltip>
         </div>
 
         <div class="toolbar-right">
@@ -267,6 +272,7 @@ function removeFile(index) {
 
 /** ===== 附件：真实文件选择（白名单/数量/大小校验），随发送上传提取 ===== */
 const fileInputRef = ref(null)
+const retrieverBtnRef = ref(null)
 const ATTACH_EXTS = ['pdf', 'docx', 'txt', 'md', 'csv']
 const ATTACH_MAX_SIZE = 5 * 1024 * 1024
 const acceptExts = ATTACH_EXTS.map((e) => `.${e}`).join(',')

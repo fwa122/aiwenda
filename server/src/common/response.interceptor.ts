@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   Injectable,
   NestInterceptor,
+  StreamableFile,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
@@ -56,11 +57,17 @@ export class ResponseInterceptor<T>
     next: CallHandler
   ): Observable<ApiResult<T>> {
     return next.handle().pipe(
-      map((data) => ({
-        code: 0,
-        message: 'ok',
-        data: serializeBigInt(data === undefined ? null : data) as T,
-      }))
+      map((data) => {
+        // 文件流（文档预览/下载）直通：不做 JSON 包装，保持原始 MIME 与二进制内容
+        if (data instanceof StreamableFile) {
+          return data as unknown as ApiResult<T>;
+        }
+        return {
+          code: 0,
+          message: 'ok',
+          data: serializeBigInt(data === undefined ? null : data) as T,
+        };
+      })
     );
   }
 }

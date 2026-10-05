@@ -6,6 +6,19 @@ import { clone, uid } from '@/utils/format'
    知识库
    ========================================================================== */
 
+/**
+ * 字段归一化：后端返回 retrieverConfig / llmConfig，前端（视图与 mock）约定为
+ * retriever / llm。统一在 API 边界映射，视图代码无需感知差异。
+ */
+function normalizeKb(kb) {
+  if (!kb) return kb
+  return {
+    ...kb,
+    retriever: kb.retriever ?? kb.retrieverConfig ?? {},
+    llm: kb.llm ?? kb.llmConfig ?? {}
+  }
+}
+
 /** 知识库列表（支持关键词、状态筛选与分页） */
 export function getKnowledgeList(params = {}) {
   const { keyword = '', status = '', page = 1, pageSize = 20 } = params
@@ -21,7 +34,10 @@ export function getKnowledgeList(params = {}) {
     list.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
     return mockOk(paginate(list, page, pageSize))
   }
-  return request({ url: '/v1/knowledge', method: 'get', params })
+  return request({ url: '/v1/knowledge', method: 'get', params }).then((res) => ({
+    ...res,
+    list: (res.list || []).map(normalizeKb)
+  }))
 }
 
 /** 已就绪的知识库（供问答页选择） */
@@ -47,7 +63,7 @@ export function getKnowledgeDetail(id) {
     const kb = mockDb.knowledgeBases.find((item) => item.id === id)
     return kb ? mockOk(clone(kb)) : Promise.reject(new Error('知识库不存在'))
   }
-  return request({ url: `/v1/knowledge/${id}`, method: 'get' })
+  return request({ url: `/v1/knowledge/${id}`, method: 'get' }).then(normalizeKb)
 }
 
 /** 新建知识库 */
@@ -101,7 +117,14 @@ export function updateKnowledge(id, payload) {
     })
     return mockOk(clone(kb), 320)
   }
-  return request({ url: `/v1/knowledge/${id}`, method: 'put', data: payload })
+  // 后端契约：检索参数为扁平字段（topK/threshold/rerank/rerankModel/hybrid）+ llm 对象，
+  // 前端表单提交的是嵌套 retriever 对象，这里拍平后再发送
+  const { retriever, llm, ...rest } = payload
+  return request({
+    url: `/v1/knowledge/${id}`,
+    method: 'put',
+    data: { ...rest, ...(retriever || {}), ...(llm ? { llm } : {}) }
+  }).then(normalizeKb)
 }
 
 /** 删除知识库 */
@@ -285,4 +308,44 @@ export function retrievalTest(payload) {
     )
   }
   return request({ url: '/v1/knowledge/retrieval-test', method: 'post', data: payload })
+}
+
+/* ==========================================================================
+   文档原始文件：预览 / 下载
+   ========================================================================== */
+
+/**
+ * 获取文档原始文件 Blob。
+ * 走原生 fetch 携带 JWT（iframe 无法带 Authorization header，故不用 <img src> 直链）；
+ * 原生 fetch 天然绕过 axios 响应拦截器的 JSON 解包，二进制响应零改造。
+ */
+export async function fetchDocumentFile(docId, mode = 'inline') {
+  const token = localStorage.getItem('kb_token')
+  const res = await fetch(`/api/v1/documents/${docId}/file?mode=${mode}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  if (!res.ok) {
+    let message = `请求失败（HTTP ${res.status}）`
+    try {
+      const body = await res.json()
+      if (body?.message) message = body.message
+    } catch {
+      /* 非 JSON 错误响应，保留状态码提示 */
+    }
+    throw new Error(message)
+  }
+  return res.blob()
+}
+
+/** 下载文档原始文件（Blob → 隐藏 <a download> 触发浏览器保存；attachment 模式服务端记审计日志） */
+export async function downloadDocument(docId, name) {
+  const blob = await fetchDocumentFile(docId, 'attachment')
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name || 'download'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }

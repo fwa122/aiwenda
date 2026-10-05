@@ -22,9 +22,20 @@
             <el-option label="索引构建中" value="indexing" />
             <el-option label="草稿" value="draft" />
           </el-select>
+          <el-button :loading="importing" @click="triggerFolderImport">
+            <el-icon><FolderOpened /></el-icon>文件夹导入
+          </el-button>
           <el-button type="primary" @click="openCreate">
             <el-icon><Plus /></el-icon>新建知识库
           </el-button>
+          <input
+            ref="folderInputRef"
+            type="file"
+            class="hidden-folder-input"
+            webkitdirectory
+            multiple
+            @change="handleFolderPicked"
+          />
         </div>
       </header>
 
@@ -170,10 +181,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { useKnowledgeStore } from '@/store'
+import { getKnowledgeList, uploadDocuments } from '@/api/knowledge'
+import { ensureNotifyPermission, watchKb, stopWatch } from '@/composables/useParseWatcher'
 import {
   kbStatusMap,
   embeddingModels,
@@ -296,6 +309,122 @@ async function handleCommand(cmd, kb) {
     }
   }
 }
+
+/* ===== 文件夹批量导入：按第一段目录名分组，同名库复用，缺库自动创建 ===== */
+const ACCEPTED_EXTS = ['pdf', 'docx', 'txt', 'md', 'csv']
+const MAX_DOC_SIZE = 20 * 1024 * 1024
+const UPLOAD_BATCH_SIZE = 10 // 后端单次最多接收 10 个文件
+const FALLBACK_GROUP = '导入文档' // 无目录前缀散文件的归属库名
+
+const folderInputRef = ref(null)
+const importing = ref(false)
+/** 本页面启动的解析监听，离开页面时清理 */
+const watchedKbIds = new Set()
+onBeforeUnmount(() => watchedKbIds.forEach((id) => stopWatch(id)))
+
+function triggerFolderImport() {
+  ensureNotifyPermission() // 用户手势内请求浏览器通知权限
+  folderInputRef.value?.click()
+}
+
+/** 任意路径段以 . 开头即视为隐藏文件/目录（含 .DS_Store、.git 内文件） */
+function isHiddenPath(relativePath) {
+  return relativePath.split('/').some((seg) => seg.startsWith('.'))
+}
+
+/** 过滤隐藏/超限/格式不符文件，并按 webkitRelativePath 第一段目录名分组 */
+function groupFiles(picked) {
+  const groups = new Map()
+  const skipped = []
+  for (const file of picked) {
+    const rel = file.webkitRelativePath || file.name
+    if (isHiddenPath(rel)) {
+      skipped.push({ name: file.name, reason: '隐藏文件' })
+      continue
+    }
+    if (file.size > MAX_DOC_SIZE) {
+      skipped.push({ name: file.name, reason: '超过 20MB' })
+      continue
+    }
+    const ext = (file.name.split('.').pop() || '').toLowerCase()
+    if (!ACCEPTED_EXTS.includes(ext)) {
+      skipped.push({ name: file.name, reason: `不支持的格式 .${ext || '(无扩展名)'}` })
+      continue
+    }
+    const groupName = rel.includes('/') ? rel.split('/')[0] : FALLBACK_GROUP
+    if (!groups.has(groupName)) groups.set(groupName, [])
+    groups.get(groupName).push(file)
+  }
+  return {
+    groups: [...groups.entries()].map(([name, files]) => ({ name, files })),
+    skipped
+  }
+}
+
+async function handleFolderPicked(e) {
+  const picked = Array.from(e.target.files || [])
+  e.target.value = '' // 允许重复选择同一文件夹
+  if (!picked.length || importing.value) return
+  importing.value = true
+  try {
+    const { groups, skipped } = groupFiles(picked)
+    await importGroups(groups, skipped)
+    await load() // 导入完成后刷新列表
+  } finally {
+    importing.value = false
+  }
+}
+
+/** 查同名知识库：存在则复用其 id，不存在则创建（描述统一“文件夹导入”） */
+async function resolveKb(name) {
+  const res = await getKnowledgeList({ keyword: name, page: 1, pageSize: 50 })
+  const existing = (res.list || []).find((kb) => kb.name === name)
+  if (existing) return { kb: existing, created: false }
+  const kb = await knowledgeStore.create({ name, description: '文件夹导入' })
+  return { kb, created: true }
+}
+
+async function importGroups(groups, skipped) {
+  let created = 0
+  let reused = 0
+  let imported = 0
+  for (const group of groups) {
+    try {
+      const { kb, created: isCreated } = await resolveKb(group.name)
+      if (isCreated) created += 1
+      else reused += 1
+      const docs = []
+      for (let i = 0; i < group.files.length; i += UPLOAD_BATCH_SIZE) {
+        const batch = group.files.slice(i, i + UPLOAD_BATCH_SIZE)
+        docs.push(...(await uploadDocuments(kb.id, batch)))
+      }
+      imported += docs.length
+      watchKb(
+        kb.id,
+        docs.map((d) => d.id),
+        { names: Object.fromEntries(docs.map((d) => [d.id, d.name])) }
+      )
+      watchedKbIds.add(kb.id)
+    } catch (err) {
+      // 单组失败不阻塞后续组，继续导入下一组
+      ElMessage.error(`知识库「${group.name}」导入失败：${err?.message || '请稍后重试'}`)
+    }
+  }
+  const parts = [`新建 ${created} 个知识库`, `复用 ${reused} 个`, `导入 ${imported} 个文档`]
+  if (skipped.length) {
+    const detail = skipped
+      .slice(0, 3)
+      .map((s) => `「${s.name}」${s.reason}`)
+      .join('、')
+    parts.push(`跳过 ${skipped.length} 个：${detail}${skipped.length > 3 ? ' 等' : ''}`)
+  }
+  ElNotification({
+    title: '文件夹导入完成',
+    type: created || reused || imported ? 'success' : 'warning',
+    message: parts.join('，'),
+    duration: 6000
+  })
+}
 </script>
 
 <style scoped>
@@ -323,6 +452,10 @@ async function handleCommand(cmd, kb) {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.hidden-folder-input {
+  display: none;
 }
 
 /* 概览 */

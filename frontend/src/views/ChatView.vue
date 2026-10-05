@@ -1,5 +1,11 @@
 <template>
-  <div class="chat-view">
+  <div
+    class="chat-view"
+    @dragenter="onDragEnter"
+    @dragover.prevent
+    @dragleave="onDragLeave"
+    @drop.prevent="onDrop"
+  >
     <!-- 顶部栏 -->
     <header class="topbar">
       <div class="topbar-left">
@@ -109,6 +115,17 @@
       </div>
     </footer>
 
+    <!-- 拖拽导入遮罩（pointer-events 关闭，drop 落在根容器上） -->
+    <transition name="fade">
+      <div v-if="dragActive" class="drop-overlay">
+        <div class="drop-panel">
+          <el-icon :size="36" color="var(--brand)"><UploadFilled /></el-icon>
+          <p class="drop-title">{{ dropHint }}</p>
+          <p class="drop-sub">支持 pdf / docx / txt / md / csv · 单个文件不超过 20MB</p>
+        </div>
+      </div>
+    </transition>
+
     <!-- 引用来源预览抽屉 -->
     <el-drawer v-model="previewVisible" :title="preview?.docName || '原文片段'" size="440px">
       <div v-if="preview" class="preview">
@@ -141,11 +158,12 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { useChatStore, useKnowledgeStore } from '@/store'
 import { fileToBase64, uploadAttachments } from '@/api/chat'
+import { ensureNotifyPermission, watchKb, stopWatch } from '@/composables/useParseWatcher'
 import { llmModels } from '@/mock/knowledge'
 import { formatNumber, formatDateTime } from '@/utils/format'
 import ChatMessage from '@/components/ChatMessage.vue'
@@ -248,6 +266,85 @@ function scrollToBottom() {
 }
 
 /* ---------------- 交互 ---------------- */
+
+/* ===== 拖拽文档直接入库（与附件按钮互不影响，仅入库不提问） ===== */
+const ACCEPTED_EXTS = ['pdf', 'docx', 'txt', 'md', 'csv']
+const MAX_DOC_SIZE = 20 * 1024 * 1024
+
+const dragDepth = ref(0)
+const dragActive = computed(() => dragDepth.value > 0)
+// 知识库选择器为多选，拖拽导入目标取第一个选中项
+const currentKbId = computed(() => kbIds.value[0] || '')
+const currentKbName = computed(
+  () => kbOptions.value.find((k) => k.id === currentKbId.value)?.name || ''
+)
+const dropHint = computed(() =>
+  currentKbId.value
+    ? `松开鼠标，导入到当前知识库「${currentKbName.value}」`
+    : '请先在下方选择知识库'
+)
+
+/** 本组件启动的解析监听，卸载时统一清理 */
+const watchedKbIds = new Set()
+onBeforeUnmount(() => watchedKbIds.forEach((id) => stopWatch(id)))
+
+/** 仅对文件拖拽生效，避免拖动页面文字时误显遮罩 */
+function hasDragFiles(e) {
+  return Array.from(e.dataTransfer?.types || []).includes('Files')
+}
+
+function onDragEnter(e) {
+  if (!hasDragFiles(e)) return
+  // 计数器方案：dragleave 在子元素间会抖动，进出配对抵消，归零才隐藏
+  dragDepth.value += 1
+}
+
+function onDragLeave() {
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+}
+
+function onDrop(e) {
+  dragDepth.value = 0
+  handleDropFiles(Array.from(e.dataTransfer?.files || []))
+}
+
+async function handleDropFiles(fileList) {
+  if (!fileList.length) return
+  if (!currentKbId.value) {
+    ElMessage.warning('请先在下方选择知识库，再拖拽导入文档')
+    return
+  }
+  ensureNotifyPermission() // 用户手势内请求浏览器通知权限
+  const accepted = []
+  for (const file of fileList) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase()
+    if (!ACCEPTED_EXTS.includes(ext)) {
+      ElMessage.error(`「${file.name}」格式不支持，仅支持 ${ACCEPTED_EXTS.join(' / ')}`)
+      continue
+    }
+    if (file.size > MAX_DOC_SIZE) {
+      ElMessage.error(`「${file.name}」超过 20MB 单文件上限`)
+      continue
+    }
+    accepted.push(file)
+  }
+  if (!accepted.length) return
+  try {
+    const docs = await knowledgeStore.upload(currentKbId.value, accepted)
+    ElNotification.success({
+      title: '导入成功',
+      message: `已导入 ${docs.length} 个文档，解析完成后会通知你`
+    })
+    watchKb(
+      currentKbId.value,
+      docs.map((d) => d.id),
+      { names: Object.fromEntries(docs.map((d) => [d.id, d.name])) }
+    )
+    watchedKbIds.add(currentKbId.value)
+  } catch (e) {
+    /* 上传失败：request 拦截器已提示 */
+  }
+}
 
 async function handleSend({ content, files }) {
   atBottom.value = true
@@ -574,6 +671,42 @@ function handleExport() {
 
 .preview-tip {
   margin-top: 16px;
+  font-size: 12px;
+  color: var(--c-text-4);
+}
+
+/* 拖拽导入遮罩 */
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.drop-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 36px 52px;
+  background: var(--c-bg);
+  border: 2px dashed var(--brand);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.drop-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--c-text-1);
+}
+
+.drop-sub {
   font-size: 12px;
   color: var(--c-text-4);
 }

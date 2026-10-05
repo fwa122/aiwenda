@@ -18,6 +18,28 @@ const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads');
 /** 允许上传的文档扩展名（与 ai-service app/parser.py 支持严格对齐） */
 const ALLOWED_DOC_EXTS = ['pdf', 'docx', 'txt', 'md', 'csv'];
 
+/** 预览/下载的 MIME 白名单：按扩展名映射，未知类型一律拒绝 */
+const MIME_BY_EXT: Record<string, string> = {
+  pdf: 'application/pdf',
+  md: 'text/markdown; charset=utf-8',
+  txt: 'text/plain; charset=utf-8',
+  csv: 'text/csv; charset=utf-8',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+/**
+ * 修复 Multer 的文件名乱码：multipart 中的 filename 是 UTF-8 字节，
+ * 但 Multer 按 latin-1 解码成字符串，中文变成 "Ã¨Â°…" 形式的乱码。
+ * 这里按 latin-1 还原原始字节再按 UTF-8 解码；带双向保护——
+ * 纯 ASCII 名与已正确解码的名字（无 latin1 扩展区字符）原样保留，
+ * 还原后出现 U+FFFD 替换符的（说明不是 latin1 乱码）同样保留原名。
+ */
+function fixFilenameEncoding(name: string): string {
+  if (!/[\u0080-\u00FF]/.test(name)) return name;
+  const restored = Buffer.from(name, 'latin1').toString('utf8');
+  return restored.includes('\uFFFD') ? name : restored;
+}
+
 @Injectable()
 export class DocumentService {
   constructor(
@@ -35,6 +57,31 @@ export class DocumentService {
     const ok = need === 'write' ? canWriteKb(kb, user) : canReadKb(kb, user);
     if (!ok) throw new ForbiddenException('无权操作该知识库下的文档');
     return kb;
+  }
+
+  /**
+   * 原始文件预览/下载：定位记录 → 权限断言 → 推导绝对路径 → 校验可读。
+   * 路径完全由服务端生成的 storageKey 推导，不接受任何用户可控路径片段；
+   * resolve 后再前缀校验一次，防止存储数据被篡改时的路径穿越（纵深防御）。
+   */
+  async getFile(docId: string, user: SessionUser) {
+    const doc = await this.prisma.document.findUnique({ where: { id: docId } });
+    if (!doc) throw new NotFoundException('文档不存在');
+    const kb = await this.assertKb(doc.kbId, user);
+
+    const contentType = MIME_BY_EXT[(doc.type || '').toLowerCase()];
+    if (!contentType) throw new BadRequestException('该文档类型不支持预览或下载');
+
+    const abs = path.resolve(UPLOAD_ROOT, doc.storageKey);
+    if (!abs.startsWith(UPLOAD_ROOT + path.sep)) {
+      throw new BadRequestException('非法文件路径');
+    }
+    try {
+      await fs.access(abs);
+    } catch {
+      throw new NotFoundException('文件已丢失，请重新上传');
+    }
+    return { doc, kb, abs, contentType };
   }
 
   async list(
@@ -79,7 +126,8 @@ export class DocumentService {
 
     const created: any[] = [];
     for (const file of files) {
-      const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+      const originalName = fixFilenameEncoding(file.originalname);
+      const ext = (originalName.split('.').pop() || '').toLowerCase();
       // 白名单与 ai-service parser 支持严格对齐；格式校验兜住路径注入与怪字符
       if (!ALLOWED_DOC_EXTS.includes(ext)) {
         throw new BadRequestException(
@@ -93,7 +141,7 @@ export class DocumentService {
         data: {
           id: genId('doc'),
           kbId,
-          name: file.originalname,
+          name: originalName,
           type: ext,
           size: BigInt(file.size),
           storageKey: `${kbId}/${safeName}`,

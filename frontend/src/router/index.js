@@ -37,6 +37,12 @@ const routes = [
         meta: { title: '知识库详情' }
       },
       {
+        path: 'favorites',
+        name: 'favorites',
+        component: () => import('@/views/FavoritesView.vue'),
+        meta: { title: '回答收藏夹' }
+      },
+      {
         path: 'settings',
         name: 'settings',
         component: () => import('@/views/SettingsView.vue'),

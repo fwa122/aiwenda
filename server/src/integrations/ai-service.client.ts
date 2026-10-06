@@ -180,6 +180,26 @@ export class AiServiceClient {
   }
 
   /**
+   * 会话自动命名：glm-4-flash 轻量生成 16 字内标题。
+   * 任何失败（AI 服务不可用/超时/解析异常）静默返回空串，调用方跳过命名即可。
+   */
+  async chatTitle(payload: { question: string; answer: string }): Promise<string> {
+    try {
+      const res = await fetch(`${this.baseUrl}/internal/chat/title`, {
+        method: 'POST',
+        headers: this.authHeaders(),
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return '';
+      const data: any = await res.json();
+      return typeof data?.title === 'string' ? data.title.trim().slice(0, 32) : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * 流式问答。返回 SSE 事件异步迭代器。
    * - mock 模式：内置假流
    * - 真实模式：转发 Python /internal/chat 的 SSE

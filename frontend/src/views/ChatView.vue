@@ -73,9 +73,11 @@
           :streaming="chatStore.streaming"
           :stage-text="chatStore.stageText"
           :source-default-expanded="idx === lastAssistantIdx"
+          :is-favorited="favoriteIds.has(msg.id)"
           @regenerate="handleRegenerate"
           @preview="handlePreview"
           @feedback="handleFeedback"
+          @favorite="handleFavorite"
         />
 
         <!-- 后续问题建议：最新一条助手消息下方，点击直接发送 -->
@@ -188,6 +190,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { useChatStore, useKnowledgeStore } from '@/store'
 import { fileToBase64, uploadAttachments } from '@/api/chat'
+import { getFavoriteIds, addFavorite } from '@/api/favorite'
 import { ensureNotifyPermission, watchKb, stopWatch } from '@/composables/useParseWatcher'
 import { llmModels } from '@/mock/knowledge'
 import { formatNumber, formatDateTime } from '@/utils/format'
@@ -212,6 +215,9 @@ const chatInputRef = ref(null)
 
 const previewVisible = ref(false)
 const preview = ref(null)
+
+/* ===== 回答收藏：已收藏消息 ID 集合（驱动星标高亮） ===== */
+const favoriteIds = ref(new Set())
 /* ===== 划词追问（预览抽屉）：选区浮动操作条 ===== */
 const previewRef = ref(null)
 const previewContentRef = ref(null)
@@ -302,7 +308,19 @@ async function syncFromRoute(id) {
     chatStore.resetConversation()
     await chatStore.fetchSuggestions()
   }
+  // 消息加载后拉取一次已收藏集合，星标高亮一次到位（失败静默，不阻断聊天）
+  await refreshFavoriteIds()
   await nextTick(scrollToBottom)
+}
+
+/** 拉取当前用户已收藏的 messageId 集合 */
+async function refreshFavoriteIds() {
+  try {
+    const ids = await getFavoriteIds()
+    favoriteIds.value = new Set(ids || [])
+  } catch {
+    /* 高亮失败不影响聊天主流程 */
+  }
 }
 
 function handleScroll() {
@@ -442,6 +460,22 @@ function handleRegenerate(msgId) {
 
 function handleFeedback(msgId, type) {
   chatStore.feedback(msgId, type)
+}
+
+/** 收藏回答：成功置星标；重复收藏（409 / Mock 提示）仅对齐本地状态；其余失败不置位 */
+async function handleFavorite(msgId) {
+  if (favoriteIds.value.has(msgId)) return
+  try {
+    await addFavorite(msgId)
+    favoriteIds.value.add(msgId)
+    ElMessage.success('已收藏')
+  } catch (e) {
+    // 409「已收藏」或 Mock 重复收藏：提示已由响应拦截器给出，这里只把状态对齐
+    if (e?.response?.status === 409 || e?.message === '已收藏') {
+      favoriteIds.value.add(msgId)
+    }
+    /* 其余失败不置位，星标保持未收藏 */
+  }
 }
 
 function handlePreview(source) {

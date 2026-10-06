@@ -23,6 +23,9 @@ _INDEX_SQL = [
     # 词法召回 GIN 索引：支持 content %> query（word_similarity）快速过滤
     """CREATE INDEX IF NOT EXISTS chunks_content_trgm_idx ON chunks
        USING gin (content gin_trgm_ops)""",
+    # 跨会话全局搜索：消息内容 trigram GIN 索引
+    """CREATE INDEX IF NOT EXISTS messages_content_trgm_idx ON messages
+       USING gin (content gin_trgm_ops)""",
 ]
 
 

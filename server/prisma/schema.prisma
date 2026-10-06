@@ -328,3 +328,22 @@ model DailyStat {
 
   @@map("daily_stats")
 }
+
+// ============================================================================
+// 回答收藏（快照策略：拷贝问答与来源，消息删除不影响收藏）
+// ============================================================================
+model Favorite {
+  id             String   @id // fav_xxx
+  userId         String   @map("user_id")
+  messageId      String   @map("message_id")
+  conversationId String   @map("conversation_id")
+  kbId           String?  @map("kb_id")
+  question       String   @db.Text
+  answer         String   @db.Text
+  sources        Json     @default("[]")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, messageId])
+  @@index([userId, createdAt])
+  @@map("favorites")
+}

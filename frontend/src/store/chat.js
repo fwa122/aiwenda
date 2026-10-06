@@ -119,6 +119,14 @@ export const useChatStore = defineStore('chat', {
       return conv
     },
 
+    /** 会话自动命名：应用服务端 SSE title 事件推送的标题（精准更新列表项与当前会话） */
+    applyTitle(conversationId, title) {
+      if (!conversationId || !title) return
+      const target = this.conversations.find((c) => c.id === conversationId)
+      if (target) target.title = title
+      if (this.current?.id === conversationId) this.current.title = title
+    },
+
     async togglePin(id, pinned) {
       const conv = await chatApi.updateConversation(id, { pinned })
       const target = this.conversations.find((c) => c.id === id)
@@ -228,8 +236,15 @@ export const useChatStore = defineStore('chat', {
           onChunk: (piece) => {
             applyTarget((t) => { t.content = (t.content || '') + piece })
           },
+          // 会话自动命名：服务端生成标题后推送（Mock 模式为首问前 16 字）
+          onTitle: (info = {}) => {
+            this.applyTitle(info.conversationId, info.title)
+          },
           onDone: async (info = {}) => {
             applyTarget((t) => {
+              // 后端 done 事件回传真实消息 ID：替换本地乐观生成的 ID，
+              // 使收藏 / 反馈等按消息 ID 的操作对刚生成的回答立即可用（Mock 模式无该字段）
+              if (info.messageId) t.id = info.messageId
               t.status = info.aborted ? 'stopped' : 'done'
               if (info.sources?.length) t.sources = info.sources
               if (info.meta) {
@@ -343,7 +358,13 @@ export const useChatStore = defineStore('chat', {
           onChunk: (piece) => {
             target.content += piece
           },
+          // 会话自动命名：首轮回答失败后重新生成成功时同样生效
+          onTitle: (info = {}) => {
+            this.applyTitle(info.conversationId, info.title)
+          },
           onDone: (info = {}) => {
+            // 同 sendQuestion：采纳后端回传的真实消息 ID（Mock 模式无该字段）
+            if (info.messageId) target.id = info.messageId
             target.status = info.aborted ? 'stopped' : 'done'
             if (info.sources?.length) target.sources = info.sources
             target.meta = {

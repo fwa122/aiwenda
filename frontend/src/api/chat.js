@@ -155,6 +155,7 @@ export function batchDeleteConversations(ids = []) {
  * @param {(info:{stage:string, text:string, sources?:Array})=>void} handlers.onStage 阶段回调（检索中/生成中）
  * @param {(piece:string)=>void} handlers.onChunk 增量文本
  * @param {(info:{aborted?:boolean, sources?:Array, meta?:object})=>void} handlers.onDone 结束回调
+ * @param {(info:{conversationId:string, title:string})=>void} handlers.onTitle 会话自动命名回调（done 后推送）
  * @param {(err:Error)=>void} handlers.onError 错误回调
  * @returns {{abort:Function}} 控制器
  */
@@ -165,6 +166,14 @@ export function streamAnswer(payload, handlers = {}) {
     const { answer, sources, hitCount } = generateAnswer(question, kbIds)
     const startedAt = Date.now()
     let streamCtrl = null
+
+    // 进入本次流式前该会话的用户消息数：0 表示这是首轮问答（用于模拟服务端 title 事件）
+    const convBefore = payload.conversationId
+      ? mockDb.conversations.find((c) => c.id === payload.conversationId)
+      : null
+    const userMsgCountBefore = convBefore
+      ? convBefore.messages.filter((m) => m.role === 'user').length
+      : 0
 
     // 阶段一：检索
     handlers.onStage?.({ stage: 'searching', text: '正在检索知识库…' })
@@ -195,6 +204,13 @@ export function streamAnswer(payload, handlers = {}) {
               }
             }
           })
+          // 模拟服务端 title 事件：首轮问答完成后按问题前 16 字生成会话标题
+          if (userMsgCountBefore === 0 && payload.conversationId && !info.aborted) {
+            handlers.onTitle?.({
+              conversationId: payload.conversationId,
+              title: question.trim().slice(0, 16)
+            })
+          }
         }
       })
     }, 800)
@@ -252,7 +268,10 @@ export function streamAnswer(payload, handlers = {}) {
               handlers.onChunk?.(evt.data?.content || '')
             } else if (evt.type === 'done') {
               meta = evt.data?.meta || {}
-              handlers.onDone?.({ sources, meta })
+              handlers.onDone?.({ sources, meta, messageId: evt.data?.messageId })
+            } else if (evt.type === 'title') {
+              // 会话自动命名：服务端在 done 之后、close 之前推送
+              handlers.onTitle?.({ conversationId: evt.data?.conversationId, title: evt.data?.title })
             } else if (evt.type === 'error') {
               handlers.onError?.(new Error(evt.data?.message || '生成失败'))
             }
@@ -321,4 +340,61 @@ export function getRuntimeModel() {
 /** 生成消息 ID（前端乐观更新使用） */
 export function createLocalId(prefix = 'msg') {
   return genId(prefix)
+}
+
+/* ==========================================================================
+   全局搜索（Ctrl+K）
+   ========================================================================== */
+
+/** 从内容中截取关键词附近片段：定位 q 首次出现位置，取前后各 60 字符拼 …（与后端规则一致） */
+function buildSnippet(content, q) {
+  const text = String(content || '')
+  const idx = text.toLowerCase().indexOf(q.toLowerCase())
+  if (idx < 0) return text.slice(0, 120)
+  const start = Math.max(0, idx - 60)
+  const end = Math.min(text.length, idx + q.length + 60)
+  return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`
+}
+
+/**
+ * 全局搜索：会话标题 / 文档名 / 消息内容 三分组一次返回。
+ * 失败由调用方捕获（弹窗组件内静默展示空态）。
+ */
+export function searchAll(q) {
+  const kw = String(q || '').trim()
+  if (USE_MOCK) {
+    const lower = kw.toLowerCase()
+    if (!lower) return mockOk({ conversations: [], documents: [], messages: [] }, 100)
+    const conversations = mockDb.conversations
+      .filter((c) => (c.title || '').toLowerCase().includes(lower))
+      .slice(0, 5)
+      .map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt }))
+    const documents = []
+    const messages = []
+    mockDb.knowledgeBases.forEach((kb) => {
+      kb.docs.forEach((doc) => {
+        if ((doc.name || '').toLowerCase().includes(lower)) {
+          documents.push({ id: doc.id, name: doc.name, kbId: kb.id, kbName: kb.name })
+        }
+      })
+    })
+    mockDb.conversations.forEach((c) => {
+      ;(c.messages || []).forEach((m) => {
+        if ((m.content || '').toLowerCase().includes(lower)) {
+          messages.push({
+            conversationId: c.id,
+            conversationTitle: c.title,
+            role: m.role,
+            createdAt: m.createdAt,
+            snippet: buildSnippet(m.content, kw)
+          })
+        }
+      })
+    })
+    return mockOk(
+      { conversations, documents: documents.slice(0, 5), messages: messages.slice(0, 8) },
+      160
+    )
+  }
+  return request({ url: '/v1/search', method: 'get', params: { q: kw } })
 }

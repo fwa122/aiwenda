@@ -7,6 +7,8 @@ import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 import { DocumentModule } from './document/document.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { ChatModule } from './chat/chat.module';
+import { FavoriteModule } from './favorite/favorite.module';
+import { SearchModule } from './search/search.module';
 import { SettingsModule } from './settings/settings.module';
 import { ApiKeyModule } from './api-key/api-key.module';
 import { StatsModule } from './stats/stats.module';
@@ -22,6 +24,8 @@ import { LogModule } from './log/log.module';
     DocumentModule,
     ConversationModule,
     ChatModule,
+    FavoriteModule,
+    SearchModule,
     SettingsModule,
     ApiKeyModule,
     StatsModule,

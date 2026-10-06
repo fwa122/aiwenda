@@ -355,3 +355,37 @@ def chat_suggestions(body: SuggestionsRequest):
     except Exception as exc:  # noqa: BLE001
         print(f'[chat] 后续问题建议生成失败: {exc}')
         return {'suggestions': []}
+
+
+# 会话自动命名：轻量模型低 token 生成 16 字内中文标题
+TITLE_SYSTEM_PROMPT = (
+    '你是会话标题生成器。根据用户提问与助手回答的开头，生成一个不超过 16 个字的中文标题，'
+    '概括对话主题。只输出一个 JSON 对象 {"title":"..."}，不要输出任何其他内容。'
+)
+
+
+class TitleRequest(BaseModel):
+    question: str = ''
+    answer: str = ''
+
+
+@router.post('/chat/title')
+def chat_title(body: TitleRequest):
+    """会话自动命名：glm-4-flash 低 token 生成 16 字内标题；任何异常返回空串"""
+    try:
+        question = (body.question or '').strip()[:500]
+        answer = (body.answer or '').strip()[:500]
+        if not question:
+            return {'title': ''}
+        messages: list[dict] = [{'role': 'system', 'content': TITLE_SYSTEM_PROMPT},
+                    {'role': 'user', 'content': f'用户提问：{question}\n\n助手回答：{answer}'}]
+        text = llm.chat_once(messages, model='glm-4-flash', temperature=0.3, max_tokens=50)
+        match = re.search(r'\{[\s\S]*\}', text or '')
+        if not match:
+            return {'title': ''}
+        data = json.loads(match.group(0))
+        title = str(data.get('title') or '').strip()[:32]
+        return {'title': title}
+    except Exception as exc:  # noqa: BLE001
+        print(f'[chat] 会话命名失败: {exc}')
+        return {'title': ''}

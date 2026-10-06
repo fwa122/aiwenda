@@ -74,6 +74,18 @@
               <el-icon :size="14"><CircleClose /></el-icon>
             </button>
           </el-tooltip>
+          <el-tooltip :content="isFavorited ? '已收藏' : '收藏'" placement="top">
+            <button
+              class="tool"
+              :class="{ active: isFavorited }"
+              @click="$emit('favorite', message.id)"
+            >
+              <el-icon :size="14">
+                <StarFilled v-if="isFavorited" />
+                <Star v-else />
+              </el-icon>
+            </button>
+          </el-tooltip>
         </template>
 
         <span v-if="message.role === 'assistant' && message.meta" class="meta-info">
@@ -102,10 +114,12 @@ const props = defineProps({
   streaming: { type: Boolean, default: false },
   stageText: { type: String, default: '' },
   /** 最新一条助手消息的来源列表默认展开 */
-  sourceDefaultExpanded: { type: Boolean, default: false }
+  sourceDefaultExpanded: { type: Boolean, default: false },
+  /** 当前回答是否已被收藏（由父组件根据收藏集合传入，驱动星标高亮） */
+  isFavorited: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['regenerate', 'preview', 'feedback'])
+const emit = defineEmits(['regenerate', 'preview', 'feedback', 'favorite'])
 
 const isStreaming = computed(() => props.message.status === 'streaming')
 const isError = computed(() => props.message.status === 'error')

@@ -350,6 +350,8 @@ export class ChatService {
             conversationId: conversation.id,
             meta,
           });
+          // 会话自动命名：done 事件先发（不等 title），title 生成在 close 前 await（最多 8s）
+          await this.autoTitleIfNeeded(conversation, dto.question, history.length === 0, accumulated, sse);
         } else if (evt.type === 'error') {
           // 上游显式报错：视为失败收尾
           throw new Error(evt.data?.message || '生成失败');
@@ -373,6 +375,8 @@ export class ChatService {
           conversationId: conversation.id,
           meta,
         });
+        // 会话自动命名：容错路径同正常路径
+        await this.autoTitleIfNeeded(conversation, dto.question, history.length === 0, accumulated, sse);
       }
     } catch (e: any) {
       const message = e?.name === 'AbortError' ? '生成已停止' : e?.message || 'AI 服务暂不可用';
@@ -410,6 +414,36 @@ export class ChatService {
     });
     const sourceMap = await this.conversationService.resolveSources([assistantMsgId]);
     sse.event('references', sourceMap.get(assistantMsgId) || []);
+  }
+
+  /**
+   * 会话自动命名：首轮问答成功后用轻量模型生成标题，推送 title 事件。
+   * 仅占位标题（「新对话」或建会话时自动截取的问题前 20 字）才覆盖，用户已改名不动；
+   * 命名失败静默跳过，不影响 SSE 收尾。
+   */
+  private async autoTitleIfNeeded(
+    conversation: { id: string; title: string },
+    question: string,
+    isFirstRound: boolean,
+    answer: string,
+    sse: SseWriter,
+  ): Promise<void> {
+    const placeholders = new Set(['新对话', question.slice(0, 20)]);
+    if (!isFirstRound || !answer.trim() || !placeholders.has(conversation.title)) return;
+    try {
+      const title = await this.ai.chatTitle({
+        question: question.slice(0, 500),
+        answer: answer.slice(0, 500),
+      });
+      if (!title) return;
+      await this.prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { title },
+      });
+      sse.event('title', { conversationId: conversation.id, title });
+    } catch {
+      /* 命名失败静默，不影响收尾 */
+    }
   }
 
   /** 防越权：只保留当前用户可见（internal/public 或自己的 private）的知识库 */

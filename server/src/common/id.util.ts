@@ -9,6 +9,7 @@ const PREFIX: Record<string, string> = {
   chunk: 'ck',
   key: 'key',
   att: 'att',
+  fav: 'fav',
 };
 
 /**

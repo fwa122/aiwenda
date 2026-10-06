@@ -11,12 +11,21 @@
       </div>
     </div>
 
+    <!-- 全局搜索入口 -->
+    <button class="search-entry" @click="searchOpen = true">
+      <el-icon :size="15"><Search /></el-icon>
+      <span>全局搜索</span>
+      <kbd>Ctrl + K</kbd>
+    </button>
+
     <!-- 新建对话 -->
     <button class="new-chat" @click="handleNewChat">
       <el-icon :size="15"><EditPen /></el-icon>
       <span>新建对话</span>
-      <kbd>Ctrl + K</kbd>
     </button>
+
+    <!-- 全局搜索弹窗（Ctrl+K）：会话 / 文档 / 回答内容 -->
+    <GlobalSearch v-model="searchOpen" />
 
     <!-- 主导航 -->
     <nav class="nav">
@@ -27,6 +36,10 @@
       <router-link to="/knowledge" class="nav-item" :class="{ active: isActive('/knowledge') }">
         <el-icon :size="16"><Collection /></el-icon>
         <span>知识库管理</span>
+      </router-link>
+      <router-link to="/favorites" class="nav-item" :class="{ active: isActive('/favorites') }">
+        <el-icon :size="16"><Star /></el-icon>
+        <span>收藏夹</span>
       </router-link>
       <router-link to="/settings" class="nav-item" :class="{ active: isActive('/settings') }">
         <el-icon :size="16"><Setting /></el-icon>
@@ -104,16 +117,20 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useChatStore, useUserStore } from '@/store'
 import ConversationItem from './ConversationItem.vue'
+import GlobalSearch from './GlobalSearch.vue'
 
 const route = useRoute()
 const router = useRouter()
 const chatStore = useChatStore()
 const userStore = useUserStore()
+
+/** 全局搜索弹窗显隐（Ctrl+K 触发） */
+const searchOpen = ref(false)
 
 const avatarText = computed(() => (userStore.nickname || 'U').slice(0, 1).toUpperCase())
 const pinnedList = computed(() => chatStore.pinnedList)
@@ -135,7 +152,8 @@ onUnmounted(() => {
 function handleKeydown(e) {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault()
-    handleNewChat()
+    // Ctrl+K 打开全局搜索（原为新建对话，搜索入口迁移至此）
+    searchOpen.value = true
   }
 }
 
@@ -241,6 +259,40 @@ function handleCommand(cmd) {
   font-size: 11px;
   color: var(--c-text-4);
   line-height: 1.2;
+}
+
+/* 全局搜索入口 */
+.search-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 24px);
+  margin: 4px 12px 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--c-text-2);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.search-entry:hover {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+
+.search-entry kbd {
+  margin-left: auto;
+  padding: 1px 5px;
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--c-text-4);
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
 }
 
 /* 新建对话 */

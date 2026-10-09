@@ -1,5 +1,7 @@
 # AI 知识库问答系统
 
+[![CI](https://github.com/fwa122/aiwenda/actions/workflows/ci.yml/badge.svg)](https://github.com/fwa122/aiwenda/actions/workflows/ci.yml)
+
 基于 RAG（检索增强生成）的企业知识库问答系统。用户上传企业文档，系统完成解析、切片、向量化后，即可通过自然语言提问并获得**可溯源**的回答。
 
 > 当前阶段：**全栈已交付，支持一键 Docker 部署**。前端（Vue 3）、Node BFF（NestJS）、Python AI 服务（FastAPI + Celery）全部完成并联调通过，RAG 全链路真实跑通（解析 → 切片 → 向量化 → 混合检索 → LLM 流式生成 → 引用溯源）。项目持续迭代至 v0.9.22：完成两轮安全专项加固（Redis 认证、防爆破、JWT 刷新轮换）、建成检索评测体系（20 条 golden QA + 精排路由可观测）、接入千问多模型渠道与嵌入内容级缓存、数据库每日自动备份、落地 vitest 单元测试体系，并提供开箱即用的 Docker Compose 全栈编排（首启自动迁移 + 播种）。详见[更新日志](#更新日志)。

@@ -1,0 +1,17 @@
+# 集成测试专用基础设施（独立端口，避开生产 5432/6379）
+# 由 server 的 vitest.e2e globalSetup 自动拉起，无需手动维护
+# 不固定 container_name：避免 compose project 名变化时同名冲突
+services:
+  postgres-test:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: kbt
+      POSTGRES_PASSWORD: kbt
+      POSTGRES_DB: kbt
+    ports:
+      - '127.0.0.1:6381:5432'
+
+  redis-test:
+    image: redis:7-alpine
+    ports:
+      - '127.0.0.1:6380:6379'

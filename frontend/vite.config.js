@@ -4,6 +4,11 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
+  test: {
+    // vitest 复用本配置（含 @ 别名）；markdown 渲染与 SSE 需要浏览器 API，用 jsdom
+    environment: 'jsdom',
+    include: ['src/**/*.spec.js']
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))

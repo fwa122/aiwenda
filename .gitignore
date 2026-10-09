@@ -11,6 +11,7 @@
 # ===== 依赖 =====
 node_modules/
 .venv/
+.npm-cache/
 
 # ===== 构建产物 =====
 dist/

@@ -34,7 +34,7 @@ const MIME_BY_EXT: Record<string, string> = {
  * 纯 ASCII 名与已正确解码的名字（无 latin1 扩展区字符）原样保留，
  * 还原后出现 U+FFFD 替换符的（说明不是 latin1 乱码）同样保留原名。
  */
-function fixFilenameEncoding(name: string): string {
+export function fixFilenameEncoding(name: string): string {
   if (!/[\u0080-\u00FF]/.test(name)) return name;
   const restored = Buffer.from(name, 'latin1').toString('utf8');
   return restored.includes('\uFFFD') ? name : restored;

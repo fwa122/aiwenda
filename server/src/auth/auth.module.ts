@@ -17,7 +17,9 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       inject: [ConfigService],
       useFactory: (c: ConfigService) => ({
         secret: c.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: c.get<string>('JWT_EXPIRES_IN') as any },
+        // 缺省 2h（与既定 access token 设计一致）：jsonwebtoken 对显式 undefined
+        // 的 expiresIn 会抛错导致登录 500，漏配环境变量时不能炸
+        signOptions: { expiresIn: (c.get<string>('JWT_EXPIRES_IN') || '2h') as any },
       }),
     }),
   ],

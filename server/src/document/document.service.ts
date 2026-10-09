@@ -134,6 +134,15 @@ export class DocumentService {
           `不支持的文档格式 .${ext || '(无扩展名)'}，仅允许: ${ALLOWED_DOC_EXTS.join(', ')}`,
         );
       }
+      // magic bytes 二次校验：扩展名可伪造，二进制类型按魔数比对（文本类 md/txt/csv 跳过）
+      const head = file.buffer.subarray(0, 8);
+      const magic = head.toString('latin1');
+      if (ext === 'pdf' && !magic.startsWith('%PDF')) {
+        throw new BadRequestException('文件内容与扩展名不符（PDF 魔数校验未通过）');
+      }
+      if (ext === 'docx' && !(head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04)) {
+        throw new BadRequestException('文件内容与扩展名不符（DOCX 魔数校验未通过）');
+      }
       const safeName = `${genId('doc')}.${ext}`;
       await fs.writeFile(path.join(dir, safeName), file.buffer);
 

@@ -75,10 +75,11 @@ export class AiServiceClient {
     return headers;
   }
 
-  /** 健康检查（AI 服务就绪探测） */
+  /** 健康检查（AI 服务就绪探测；/internal/health 已要求内部令牌） */
   async health(timeoutMs = 3000): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/internal/health`, {
+        headers: this.authHeaders(),
         signal: AbortSignal.timeout(timeoutMs),
       });
       return res.ok;
@@ -101,6 +102,7 @@ export class AiServiceClient {
   async modelInfo(): Promise<{ model: string; embedding: any; available: boolean }> {
     try {
       const res = await fetch(`${this.baseUrl}/internal/health`, {
+        headers: this.authHeaders(),
         signal: AbortSignal.timeout(3000),
       });
       if (!res.ok) throw new Error('bad status');
@@ -119,7 +121,7 @@ export class AiServiceClient {
     threshold?: number;
     hybrid?: boolean;
     rerank?: boolean;
-  }): Promise<{ results: any[]; elapsedMs: number; total: number }> {
+  }): Promise<{ results: any[]; elapsedMs: number; total: number; route?: string | null }> {
     const res = await fetch(`${this.baseUrl}/internal/search`, {
       method: 'POST',
       headers: this.authHeaders(),

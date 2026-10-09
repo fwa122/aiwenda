@@ -35,13 +35,15 @@ services:
       - TZ=Asia/Shanghai
       - PORT=3000
       - DATABASE_URL=postgresql://${POSTGRES_USER:-kb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kb}?schema=public
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-120m}
       - AI_SERVICE_URL=http://ai-service:8000
       - AI_SERVICE_TOKEN=${INTERNAL_TOKEN}
       - AI_MOCK=false
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost}
+      # 首次启动 seed admin 账号用的初始密码（未配置时 seed 跳过 admin 播种）
+      - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD}
     volumes:
       - uploads_data:/app/uploads
     depends_on:
@@ -60,6 +62,8 @@ services:
   ai-service:
     image: gujinyi666/aiwenda-ai:latest
     environment: &ai_env
+      # ⚠️ 本块必须与 docker-compose.yml 的 ai-service environment 保持一致（历史教训：
+      # 双手工维护曾漂移漏掉 QIANWEN_* / EMBEDDING_MODEL，导致免构建部署嵌入渠道失效）
       - TZ=Asia/Shanghai
       # 智谱 BigModel（生成+向量+rerank+OCR）
       - ZHIPU_API_KEY=${ZHIPU_API_KEY}
@@ -68,8 +72,12 @@ services:
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
       - MOONSHOT_BASE_URL=${MOONSHOT_BASE_URL:-https://api.moonshot.cn/v1}
       - MOONSHOT_THINKING=${MOONSHOT_THINKING:-disabled}
+      # Qianwen / DashScope（生成 + 向量）
+      - QIANWEN_API_KEY=${QIANWEN_API_KEY}
+      - QIANWEN_BASE_URL=${QIANWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       # 向量 / 默认生成参数
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-zhipu}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embedding-3}
       - LLM_MODEL=${LLM_MODEL:-glm-4-flash}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.3}
       # 扫描件 OCR
@@ -77,7 +85,7 @@ services:
       - OCR_MAX_PAGES=${OCR_MAX_PAGES:-20}
       # 基础设施（容器网络服务名）
       - DATABASE_URL=postgresql://${POSTGRES_USER:-kb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kb}
-      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/1
       # 与 server 容器共享的上传目录（worker 直接读取落盘文件）
       - UPLOAD_ROOT=/app/uploads
       # 内部令牌（与 server 的 AI_SERVICE_TOKEN 同值，fail-closed）
@@ -123,6 +131,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    # requirepass 必填（:? 缺失时 compose 直接报错，fail-fast）：
+    # Redis 未授权访问是经典入侵入口，且该实例是 Celery broker
+    command: ['redis-server', '--requirepass', '${REDIS_PASSWORD:?REDIS_PASSWORD 未配置}']
     volumes:
       - redis_data:/data
     restart: unless-stopped

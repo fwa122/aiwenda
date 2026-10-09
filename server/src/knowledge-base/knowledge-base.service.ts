@@ -20,8 +20,8 @@ const DEFAULT_RETRIEVER = {
 };
 
 const DEFAULT_LLM = {
-  provider: 'zhipu',
-  model: 'glm-4-flash',
+  provider: 'qianwen',
+  model: 'qwen3.8-max',
   temperature: 0.3,
 };
 

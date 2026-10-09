@@ -14,6 +14,7 @@ import {
   UploadedFiles,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
 import { createReadStream } from 'fs';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -36,6 +37,8 @@ export class DocumentCollectionController {
   }
 
   @Post()
+  // 上传触发解析+切片+embedding，计算成本高：单 IP 每分钟 10 次
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   // 单文件上限 20MB（Multer 超限自动映射为 413）
   @UseInterceptors(FilesInterceptor('files', 10, { limits: { fileSize: 20 * 1024 * 1024 } }))
   async upload(
@@ -74,6 +77,8 @@ export class DocumentCollectionController {
   }
 
   @Post(':docId/reparse')
+  // 重解析同样触发完整 embedding 流程：单 IP 每分钟 10 次
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   reparse(@Param('kbId') kbId: string, @Param('docId') docId: string, @CurrentUser() user: any) {
     return this.service.reparse(kbId, docId, user);
   }

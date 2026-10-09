@@ -187,7 +187,7 @@ export const useChatStore = defineStore('chat', {
       }
 
       const kbIds = options.kbIds || this.current?.kbIds || []
-      const model = options.model || this.current?.model || 'glm-4-flash'
+      const model = options.model || this.current?.model || 'qwen3.8-max'
 
       // 2. 追加用户消息（乐观更新）
       const userMsg = {
@@ -338,7 +338,7 @@ export const useChatStore = defineStore('chat', {
       this.stage = 'searching'
       this.stageText = '正在重新检索知识库…'
 
-      const model = this.current?.model || target.meta?.model || 'glm-4-flash'
+      const model = this.current?.model || target.meta?.model || 'qwen3.8-max'
       const startedAt = Date.now()
 
       this.controller = chatApi.streamAnswer(

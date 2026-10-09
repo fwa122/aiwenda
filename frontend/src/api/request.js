@@ -22,6 +22,40 @@ http.interceptors.request.use((config) => {
   return config
 })
 
+/* ---- JWT 静默刷新（单飞：并发 401 只发一次 refresh 请求） ---- */
+let refreshing = null
+
+function tryRefresh() {
+  const rt = localStorage.getItem('kb_refresh_token')
+  if (!rt) return Promise.reject(new Error('no refresh token'))
+  if (!refreshing) {
+    refreshing = axios
+      .post(`${http.defaults.baseURL}/auth/refresh`, { refreshToken: rt })
+      .then((res) => {
+        const body = res.data
+        if (body && body.code === SUCCESS_CODE && body.data && body.data.token) {
+          localStorage.setItem('kb_token', body.data.token)
+          if (body.data.refreshToken) {
+            localStorage.setItem('kb_refresh_token', body.data.refreshToken)
+          }
+          return body.data.token
+        }
+        throw new Error(body?.message || '刷新失败')
+      })
+      .finally(() => {
+        refreshing = null
+      })
+  }
+  return refreshing
+}
+
+function forceRelogin(message) {
+  localStorage.removeItem('kb_token')
+  localStorage.removeItem('kb_refresh_token')
+  ElMessage.error(message || '登录已过期，请重新登录')
+  window.location.href = '/login'
+}
+
 http.interceptors.response.use(
   (res) => {
     const body = res.data
@@ -38,10 +72,22 @@ http.interceptors.response.use(
   (err) => {
     const status = err.response?.status
     if (status === 401) {
-      localStorage.removeItem('kb_token')
-      ElMessage.error('登录已过期，请重新登录')
-      window.location.href = '/login'
-      return Promise.reject(err)
+      const cfg = err.config
+      // 刷新/登录接口自身 401：无路可走，直接回登录页
+      if (cfg && /\/auth\/(refresh|login)$/.test(cfg.url || '')) {
+        forceRelogin()
+        return Promise.reject(err)
+      }
+      // 业务接口 401：尝试静默刷新后重试原请求（旧请求不打断用户操作）
+      return tryRefresh()
+        .then((token) => {
+          cfg.headers.Authorization = `Bearer ${token}`
+          return http(cfg)
+        })
+        .catch(() => {
+          forceRelogin()
+          return Promise.reject(err)
+        })
     }
     ElMessage.error(err.response?.data?.message || err.message || '网络异常')
     return Promise.reject(err)

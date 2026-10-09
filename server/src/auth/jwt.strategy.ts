@@ -17,6 +17,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!payload?.sub) {
       throw new UnauthorizedException();
     }
+    if (payload.type === 'refresh') {
+      // refresh 令牌只允许用于 /auth/refresh，不得作为 access token 访问业务接口
+      throw new UnauthorizedException();
+    }
     return {
       id: payload.sub,
       username: payload.username,

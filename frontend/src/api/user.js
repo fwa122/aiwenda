@@ -28,6 +28,7 @@ export async function login(payload) {
   const res = await request({ url: '/v1/auth/login', method: 'post', data: payload })
   // 真实分支同样需要持久化 token，路由守卫读取的是 localStorage.kb_token
   localStorage.setItem('kb_token', res.token)
+  if (res.refreshToken) localStorage.setItem('kb_refresh_token', res.refreshToken)
   localStorage.setItem('kb_user', JSON.stringify(res.user))
   return res
 }
@@ -59,6 +60,7 @@ export function register(payload) {
 /** 退出登录 */
 export function logout() {
   localStorage.removeItem('kb_token')
+  localStorage.removeItem('kb_refresh_token')
   localStorage.removeItem('kb_user')
   if (USE_MOCK) return mockOk({ success: true }, 120)
   return request({ url: '/v1/auth/logout', method: 'post' })

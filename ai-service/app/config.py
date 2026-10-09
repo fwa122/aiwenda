@@ -19,13 +19,23 @@ class Settings(BaseSettings):
     # K2.6 思考模式：disabled 保证问答响应速度；enabled 时思考内容不进 SSE 正文（回答前长空白）
     moonshot_thinking: str = 'disabled'  # disabled | enabled
 
+    # Qianwen / DashScope（OpenAI 兼容；对话 + 嵌入均可）
+    qianwen_api_key: str = ''
+    qianwen_base_url: str = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+
     # Embedding：维度必须与库内 vector(1024) 一致，换模型需全库重建索引
-    embedding_provider: str = 'zhipu'  # zhipu | mock
+    embedding_provider: str = 'zhipu'  # zhipu | qianwen | mock
     embedding_model: str = 'embedding-3'
     embedding_dimensions: int = 1024
 
     # Rerank：智谱 /paas/v4/rerank，当前模型 ID 固定为 rerank
     rerank_model: str = 'rerank'
+
+    # 自适应精排路由：Top1 与 Top2 候选分差 ≥ 该值时视为「赢家明确」，跳过精排调用。
+    # 阈值由逐用例地面真值标定（v0.9.11）：重排正收益 5 条 gap 0.0008~0.0259、负收益
+    # 7 条 gap 0.0011~0.0272，gap 不预测收益；唯一干净分离带 (0.0272, 0.0339]，其内
+    # 0.03 双侧 margin ≥0.0039，跳过集合 {q07,q12,q18} 逐用例 delta=0，指标零损伤。
+    rerank_skip_gap: float = 0.03
 
     # OCR：扫描件 PDF 兜底（智谱 /paas/v4/layout_parsing，glm-ocr）
     ocr_enabled: bool = True

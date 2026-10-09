@@ -6,8 +6,8 @@ import { UpdateSettingsDto } from './dto/settings.dto';
 /** 与前端 SettingsView 默认值一致（接口文档第八章） */
 export const DEFAULT_SETTINGS = {
   model: {
-    provider: 'zhipu',
-    model: 'glm-4-flash',
+    provider: 'qianwen',
+    model: 'qwen3.8-max',
     temperature: 0.3,
     topP: 0.85,
     maxTokens: 2048,

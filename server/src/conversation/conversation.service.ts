@@ -12,7 +12,7 @@ import {
   UpdateConversationDto,
 } from './dto/conversation.dto';
 
-const DEFAULT_MODEL = 'glm-4-flash';
+const DEFAULT_MODEL = 'qwen3.8-max';
 
 /** 契约中的引用来源结构（坐标 + 展示信息） */
 export interface SourceView {

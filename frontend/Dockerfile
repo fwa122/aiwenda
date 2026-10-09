@@ -5,8 +5,9 @@ FROM node:24-slim AS build
 WORKDIR /app
 
 # 先拷依赖清单，利用 Docker 层缓存（package.json 不变时跳过 npm ci）
+# --legacy-peer-deps：与本地安装约定一致，规避 peer 依赖版本冲突
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # 再拷源码构建（VITE_USE_MOCK=false、VITE_API_BASE=/api 由 .env.production 提供）
 COPY . .

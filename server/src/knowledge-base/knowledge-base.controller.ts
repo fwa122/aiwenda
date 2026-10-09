@@ -103,6 +103,7 @@ export class KnowledgeBaseController {
       elapsedMs: Date.now() - started,
       total: upstream.total,
       results: upstream.results,
+      route: upstream.route,
     };
   }
 }

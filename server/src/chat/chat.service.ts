@@ -33,12 +33,16 @@ export const QUICK_PROMPTS = [
 
 const DEFAULT_CONTEXT_ROUNDS = 5; // 未配置时的默认携带轮数
 const MAX_CONTEXT_ROUNDS = 10; // 上下文轮数上限（防止上下文过长撑爆 token）
+const HISTORY_CHAR_BUDGET = 4000; // 历史消息总字符预算（中文 ≈ 2 字符/token，约 2000 token）
+const HISTORY_MSG_MAX_CHARS = 1200; // 单条历史消息截断上限（回答关键内容多在前半）
 const DEFAULT_RETRIEVER = { topK: 5, threshold: 0.28, rerank: true, hybrid: true };
 
 interface DoneMeta {
   model: string;
   elapsedMs: number;
   tokens: { prompt: number; completion: number; total: number };
+  /** 多轮改写后的检索词（改写未生效时为 null）——调试可见，v0.9.13 遗留透传 */
+  rewrittenQuery?: string | null;
 }
 
 @Injectable()
@@ -201,7 +205,7 @@ export class ChatService {
     /** 强制引用：无 [n] 编号时由 Python 自动追加来源列表 */
     const forceCitation = modelSettings.enableCitation !== false;
 
-    // 4. 历史 N 轮上下文（当前 user 消息之前）
+    // 4. 历史 N 轮上下文（当前 user 消息之前），带 token 预算裁剪
     const historyRows = await this.prisma.message.findMany({
       where: {
         conversationId: conversation.id,
@@ -211,7 +215,26 @@ export class ChatService {
       orderBy: { createdAt: 'desc' },
       take: contextRounds * 2,
     });
-    const history = historyRows.reverse().map((m) => ({ role: m.role, content: m.content }));
+    // 从最新往旧装入字符预算：单条超长截断，装不下的更旧消息整体放弃（保持时间连续性），
+    // 长会话历史部分从最坏 5000+ token 压到 ~2000 token
+    let budget = HISTORY_CHAR_BUDGET;
+    const history: { role: string; content: string }[] = [];
+    for (let i = historyRows.length - 1; i >= 0; i--) {
+      const m = historyRows[i];
+      let content = m.content;
+      if (content.length > HISTORY_MSG_MAX_CHARS) {
+        content = content.slice(0, HISTORY_MSG_MAX_CHARS) + '…';
+      }
+      if (content.length > budget) {
+        if (!history.length) {
+          // 最新一条自身超预算：截断装入，保证至少带一轮上下文
+          history.unshift({ role: m.role, content: content.slice(0, budget) + '…' });
+        }
+        break;
+      }
+      budget -= content.length;
+      history.unshift({ role: m.role, content });
+    }
 
     // 5. 检索参数：优先取第一个知识库配置；允许会话级覆盖
     const baseRetriever = await this.resolveRetriever(kbIds);
@@ -336,6 +359,7 @@ export class ChatService {
           const meta: DoneMeta = {
             model: evt.data?.meta?.model || usedModel,
             elapsedMs: evt.data?.meta?.elapsedMs || Date.now() - startedAt,
+            rewrittenQuery: evt.data?.meta?.rewrittenQuery ?? null,
             tokens: {
               prompt: evt.data?.meta?.tokens?.prompt || 0,
               completion: evt.data?.meta?.tokens?.completion || 0,

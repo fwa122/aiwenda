@@ -424,14 +424,18 @@ export const kbStatusMap = {
 
 /** 可选 Embedding 模型 */
 export const embeddingModels = [
+  { value: 'qwen3.7-text-embedding', label: 'qwen3.7-text-embedding（千问，1024 维）' },
   { value: 'bge-large-zh-v1.5', label: 'bge-large-zh-v1.5（中文，1024 维）' },
   { value: 'bge-m3', label: 'bge-m3（多语言，1024 维）' },
   { value: 'text-embedding-v3', label: 'text-embedding-v3（通义，1536 维）' },
   { value: 'Conan-embedding-v1', label: 'Conan-embedding-v1（中文长文本）' }
 ]
 
-/** 可选推理模型（与 ai-service 模型注册表对齐：glm-*→智谱，kimi-*→Moonshot；未注册名会被回落默认） */
+/** 可选推理模型（与 ai-service 模型注册表对齐：qwen 与 deepseek 前缀走千问，glm 前缀走智谱，kimi 前缀走 Moonshot；未注册名会被回落默认） */
 export const llmModels = [
+  { value: 'qwen3.8-max', label: 'Qwen3.8-Max（千问）', provider: 'qianwen' },
+  { value: 'qwen3.7-flash', label: 'Qwen3.7-Flash（千问）', provider: 'qianwen' },
+  { value: 'deepseek-v4-pro-0813', label: 'DeepSeek-V4-Pro（千问平台）', provider: 'qianwen' },
   { value: 'glm-4-flash', label: 'GLM-4-Flash（智谱）', provider: 'zhipu' },
   { value: 'kimi-k2.6', label: 'Kimi K2.6（月之暗面）', provider: 'moonshot' }
 ]

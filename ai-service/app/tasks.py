@@ -6,7 +6,7 @@ from celery import Celery
 from .chunker import chunk_blocks
 from .config import settings
 from .db import execute, fetch_one, pool, vec_literal
-from .embedding import embed_texts
+from .embedding import embed_texts_cached
 from .ids import gen_id
 from .parser import parse_file
 
@@ -58,8 +58,8 @@ def parse_document(self, doc_id: str):
         if not chunks:
             raise ValueError('切片结果为空')
 
-        # 3. 批量向量化
-        vectors = embed_texts([c['content'] for c in chunks])
+        # 3. 批量向量化（内容 hash 缓存：未变更文本不再重复调嵌入 API）
+        vectors = embed_texts_cached([c['content'] for c in chunks])
 
         # 4. 批量写入 chunks（executemany，含向量）
         rows = [

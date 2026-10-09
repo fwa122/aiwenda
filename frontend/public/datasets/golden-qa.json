@@ -1,0 +1,146 @@
+{
+  "dataset": "kb-eval-golden-v1",
+  "createdAt": "2026-10-06",
+  "cases": [
+    {
+      "id": "q01",
+      "question": "这个项目前后端都用了哪些技术栈？",
+      "docNameContains": "开发文档",
+      "keywords": ["Element Plus", "NestJS 12", "pgvector"],
+      "note": "开发文档1.1技术选型表：Vue 3 + Vite 6 + Element Plus、NestJS 12 + TypeScript 5.9 + Prisma 6、PostgreSQL 16 + pgvector"
+    },
+    {
+      "id": "q02",
+      "question": "有没有现成的测试账号可以登录？",
+      "docNameContains": "开发文档",
+      "keywords": ["admin123", "editor123"],
+      "note": "开发文档2.1演示账号表：admin/admin123、editor/editor123、viewer/viewer123"
+    },
+    {
+      "id": "q03",
+      "question": "前端怎么从 Mock 模式切到真实后端接口？",
+      "docNameContains": "开发文档",
+      "keywords": ["VITE_USE_MOCK", "VITE_API_BASE"],
+      "note": "开发文档2.2环境变量：.env.development 中 VITE_USE_MOCK=false、VITE_API_BASE=/api"
+    },
+    {
+      "id": "q04",
+      "question": "检索时向量和关键词两路结果是怎么融合排序的？",
+      "docNameContains": "开发文档",
+      "keywords": ["RRF", "k=60"],
+      "note": "开发文档6.8.1：RRF 融合重排，score = 1/(k+rv) + 1/(k+rl)（k=60）"
+    },
+    {
+      "id": "q05",
+      "question": "用 Kimi 模型来回答问题有什么参数上的限制？",
+      "docNameContains": "开发文档",
+      "keywords": ["kimi-k2.6", "temperature"],
+      "note": "开发文档6.11.2 Kimi特殊参数：kimi-k2.6 API 仅允许 temperature=0.6，thinking 经 extra_body 透传"
+    },
+    {
+      "id": "q06",
+      "question": "提问的时候可以直接附带文件吗？有什么限制？",
+      "docNameContains": "开发文档",
+      "keywords": ["5MB", "6000"],
+      "note": "开发文档6.12.3附件约束：单文件 ≤5MB、每次 ≤2 个、文本截取 6000 字"
+    },
+    {
+      "id": "q07",
+      "question": "为什么向量库选 pgvector 而不是 Milvus？",
+      "docNameContains": "后端开发方案",
+      "keywords": ["pgvector", "Milvus"],
+      "note": "后端开发方案2.3向量库选型：起步推荐 pgvector（HNSW 索引），规模上来后再迁 Milvus"
+    },
+    {
+      "id": "q08",
+      "question": "数据库一共设计了多少张表？向量数据存在哪？",
+      "docNameContains": "后端开发方案",
+      "keywords": ["11 张表", "vector(1024)"],
+      "note": "后端开发方案第四章：共 11 张表；4.4 chunks 表 embedding 为 vector(1024)"
+    },
+    {
+      "id": "q09",
+      "question": "引用来源为什么要只存坐标而不存文档名？",
+      "docNameContains": "后端开发方案",
+      "keywords": ["只存坐标", "JOIN"],
+      "note": "后端开发方案4.7 message_sources 设计要点：只存坐标，展示时 JOIN documents，文档改名引用自动同步"
+    },
+    {
+      "id": "q10",
+      "question": "Node 和 Python 服务之间是怎么划分职责的？",
+      "docNameContains": "后端开发方案",
+      "keywords": ["Node BFF", "计算密集"],
+      "note": "后端开发方案1.2边界约定：Node BFF 做事务型 CRUD，解析/检索/LLM 等计算密集归 Python AI 服务"
+    },
+    {
+      "id": "q11",
+      "question": "文档解析任务失败了会重试吗？哪些情况不重试？",
+      "docNameContains": "后端开发方案",
+      "keywords": ["ValueError", "指数退避"],
+      "note": "后端开发方案6.5：ValueError 确定性错误立即永久失败，其余瞬时错误指数退避重试"
+    },
+    {
+      "id": "q12",
+      "question": "知识库的切片大小和重叠设多少比较合适？",
+      "docNameContains": "后端开发方案",
+      "keywords": ["chunk_size", "512"],
+      "note": "后端开发方案6.2关键参数经验值：长文档 chunk_size=512/overlap=64，FAQ 短文本 256/32，表格密集 768/96"
+    },
+    {
+      "id": "q13",
+      "question": "接口返回 401 的时候前端应该怎么处理？",
+      "docNameContains": "接口文档",
+      "keywords": ["40100", "Token"],
+      "note": "接口文档1.5错误码表：40100/401 未登录或 Token 失效，清除 token 跳转登录页"
+    },
+    {
+      "id": "q14",
+      "question": "流式问答的接口会推送哪几种事件？",
+      "docNameContains": "接口文档",
+      "keywords": ["references", "delta", "ping"],
+      "note": "接口文档5.1事件流：references/delta/done/error 四种事件 + 每 15s 的 : ping 心跳注释行"
+    },
+    {
+      "id": "q15",
+      "question": "有没有只测检索效果、不调用大模型的接口？",
+      "docNameContains": "接口文档",
+      "keywords": ["retrieval-test", "不调用大模型"],
+      "note": "接口文档6.8检索测试：POST /api/v1/knowledge/retrieval-test，只做检索不调用大模型不消耗生成 Token"
+    },
+    {
+      "id": "q16",
+      "question": "上传文档支持什么格式？单个文件最大能传多大？",
+      "docNameContains": "接口文档",
+      "keywords": ["docx", "20MB"],
+      "note": "接口文档7.2上传约束：白名单 pdf/docx/txt/md/csv，单文件 20MB 超限 413"
+    },
+    {
+      "id": "q17",
+      "question": "API 密钥创建之后还能再查看完整的密钥吗？",
+      "docNameContains": "接口文档",
+      "keywords": ["脱敏", "sk-kb-"],
+      "note": "接口文档9.1：key 只在创建时返回完整值，列表中为脱敏展示（sk-kb-**** 格式）"
+    },
+    {
+      "id": "q18",
+      "question": "用 Docker 部署成功之后一共会跑几个容器？",
+      "docNameContains": "启动运行指南",
+      "keywords": ["6 个容器", "kb-prod"],
+      "note": "启动运行指南第一章：本机运行 6 个容器（项目名 kb-prod），仅 nginx 暴露 80 端口"
+    },
+    {
+      "id": "q19",
+      "question": "部署之前 .env 里哪些配置项是必填的？",
+      "docNameContains": "启动运行指南",
+      "keywords": ["POSTGRES_PASSWORD", "ZHIPU_API_KEY"],
+      "note": "启动运行指南第三章第1步：必填 4 项 POSTGRES_PASSWORD/JWT_SECRET/INTERNAL_TOKEN/ZHIPU_API_KEY"
+    },
+    {
+      "id": "q20",
+      "question": "80 端口被占用了要怎么处理？",
+      "docNameContains": "启动运行指南",
+      "keywords": ["NGINX_PORT", "8080"],
+      "note": "启动运行指南第八章FAQ：.env 设置 NGINX_PORT=8080 后重新 up -d，改用 8080 端口访问"
+    }
+  ]
+}

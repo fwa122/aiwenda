@@ -164,8 +164,8 @@
         </el-descriptions>
 
         <p class="preview-tip">
-          提示：选中上方片段文字，可直接「解释 / 翻译 / 就这段提问」（PDF 预览暂不支持划词）。
-          正式版本将在此处展示原文高亮定位与前后文片段（支持跳转到原文档对应页码）。
+          提示：选中上方片段文字，可直接「解释 / 翻译 / 就这段提问」；关闭本抽屉可回到原文预览
+          （PDF 已定位到引用页码，PDF 内暂不支持划词）。
         </p>
 
         <!-- 划词浮动操作条（绝对定位于预览容器内，坐标取选区相对位置） -->
@@ -181,6 +181,17 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- 引用原文预览抽屉：点击引用直达原文，PDF 定位到引用页码 -->
+    <DocPreviewDrawer
+      v-model="docPreview.visible"
+      :doc-id="docPreview.docId"
+      :name="docPreview.name"
+      :type="docPreview.type"
+      :page="docPreview.page"
+      show-snippet-action
+      @snippet="openSnippetDrawer"
+    />
   </div>
 </template>
 
@@ -198,6 +209,7 @@ import ChatMessage from '@/components/ChatMessage.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import DocTypeIcon from '@/components/DocTypeIcon.vue'
+import DocPreviewDrawer from '@/components/DocPreviewDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -478,8 +490,30 @@ async function handleFavorite(msgId) {
   }
 }
 
+/* ===== 引用原文预览：点击引用直达原文，PDF 定位到引用页码 ===== */
+const docPreview = ref({ visible: false, docId: '', name: '', type: '', page: 1 })
+/** 当前引用来源（片段抽屉从原文预览跳回时复用） */
+const snippetSource = ref(null)
+
 function handlePreview(source) {
-  preview.value = source
+  // 有文档 ID 时直达原文预览（PDF 定位页码）；否则退回片段抽屉
+  if (source?.docId) {
+    snippetSource.value = source
+    docPreview.value = {
+      visible: true,
+      docId: source.docId,
+      name: source.docName || '文档预览',
+      type: source.docType || '',
+      page: Number(source.page) || 1
+    }
+    return
+  }
+  openSnippetDrawer()
+}
+
+/** 从原文预览的「片段信息」跳回片段抽屉（切片对照 + 划词追问） */
+function openSnippetDrawer() {
+  preview.value = snippetSource.value
   previewVisible.value = true
 }
 

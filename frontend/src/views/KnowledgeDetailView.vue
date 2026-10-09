@@ -300,6 +300,85 @@
               </div>
             </div>
           </el-tab-pane>
+
+          <!-- 检索评测：golden QA 数据集跑 HitRate@5 / MRR，rerank 关/开对比 -->
+          <el-tab-pane label="检索评测" name="eval" lazy>
+            <div class="eval-tab">
+              <div class="eval-toolbar">
+                <div class="eval-info">
+                  <span>数据集</span>
+                  <el-tag size="small" effect="plain">{{ dataset?.dataset || '未加载' }}</el-tag>
+                  <span class="text-muted">{{ dataset?.cases?.length || 0 }} 条用例 · TopK=5 · 阈值=0 · 精排关/开对比 · 命中=文档锚点切片±1</span>
+                </div>
+                <div class="eval-actions">
+                  <el-button v-if="hardCount" :disabled="evalRunning" @click="exportHardCases">
+                    导出难例（{{ hardCount }}）
+                  </el-button>
+                  <el-button v-if="evalRunning" @click="stopEval">停止</el-button>
+                  <el-button type="primary" :loading="evalRunning" :disabled="!dataset" @click="runEval">
+                    <el-icon><VideoPlay /></el-icon>{{ evalRunning ? '评测中…' : '运行评测' }}
+                  </el-button>
+                </div>
+              </div>
+
+              <el-progress
+                v-if="evalRunning"
+                :percentage="evalProgress"
+                :stroke-width="6"
+                style="margin: 4px 0 14px"
+              />
+
+              <template v-if="evalReport">
+                <section class="metrics" style="margin-bottom: 16px">
+                  <div v-for="m in evalMetricCards" :key="m.label" class="metric-card">
+                    <div class="m-label">{{ m.label }}</div>
+                    <div class="m-value">{{ m.value }}</div>
+                    <div class="m-sub">{{ m.sub }}</div>
+                  </div>
+                </section>
+
+                <el-table :data="evalReport.rows" size="small" style="width: 100%">
+                  <el-table-column label="#" type="index" width="44" />
+                  <el-table-column label="问题" min-width="210" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.question }}</template>
+                  </el-table-column>
+                  <el-table-column label="目标文档" width="130" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.docNameContains }}</template>
+                  </el-table-column>
+                  <el-table-column label="锚点" width="88" align="center">
+                    <template #default="{ row }">{{ row.anchorText || '—' }}</template>
+                  </el-table-column>
+                  <el-table-column label="排名·精排关" width="92" align="center">
+                    <template #default="{ row }">
+                      <span v-if="row.offRank">Top{{ row.offRank }}</span>
+                      <span v-else class="text-muted">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="排名·精排开" width="92" align="center">
+                    <template #default="{ row }">
+                      <span v-if="row.onRank">Top{{ row.onRank }}</span>
+                      <span v-else class="text-muted">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="耗时 关/开" width="110" align="right">
+                    <template #default="{ row }">{{ row.offMs }} / {{ row.onMs }}ms</template>
+                  </el-table-column>
+                  <el-table-column label="结论" width="96" align="center">
+                    <template #default="{ row }">
+                      <el-tag size="small" :type="row.onRank ? 'success' : 'danger'" effect="light">
+                        {{ row.onRank ? `命中#${row.onRank}` : '未命中' }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </template>
+              <el-empty
+                v-else-if="!evalRunning"
+                :description="dataset ? '点击「运行评测」生成 HitRate / MRR 报告' : '正在加载评测数据集…'"
+                :image-size="80"
+              />
+            </div>
+          </el-tab-pane>
         </el-tabs>
       </template>
     </div>
@@ -318,33 +397,13 @@
       <el-empty v-else description="该文档暂无切片数据" />
     </el-drawer>
 
-    <!-- 文档预览抽屉：PDF 走 iframe 渲染，文本类直接展示，其余格式引导下载 -->
-    <el-drawer
+    <!-- 文档预览抽屉：PDF 用 vue-pdf-embed 渲染（支持页码跳转），文本类直接展示，其余格式引导下载 -->
+    <DocPreviewDrawer
       v-model="previewVisible"
-      :title="previewDoc?.name || '文档预览'"
-      size="62%"
-      @closed="closePreview"
-    >
-      <div v-loading="previewLoading" class="doc-preview">
-        <template v-if="previewDoc">
-          <iframe
-            v-if="previewDoc.kind === 'pdf'"
-            :src="previewDoc.url"
-            style="width: 100%; height: 100%; min-height: 70vh; border: none; border-radius: 8px"
-          />
-          <div v-else-if="previewDoc.kind === 'text'" class="text-frame">
-            <div v-if="previewDoc.html" class="md-body" v-html="previewDoc.html" />
-            <pre v-else class="plain-text">{{ previewDoc.plain }}</pre>
-          </div>
-          <div v-else class="preview-fallback">
-            <el-empty description="该格式暂不支持在线预览" :image-size="90" />
-            <el-button type="primary" size="small" @click="handleDownload(previewDoc)">
-              下载后查看
-            </el-button>
-          </div>
-        </template>
-      </div>
-    </el-drawer>
+      :doc-id="previewDoc?.id || ''"
+      :name="previewDoc?.name || ''"
+      :type="previewDoc?.type || ''"
+    />
   </div>
 </template>
 
@@ -353,13 +412,13 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useKnowledgeStore } from '@/store'
-import { retrievalTest, getDocumentChunks, fetchDocumentFile, downloadDocument } from '@/api/knowledge'
+import { retrievalTest, getDocumentChunks, downloadDocument } from '@/api/knowledge'
 import { watchKb, stopWatch } from '@/composables/useParseWatcher'
-import { renderMarkdown } from '@/utils/markdown'
 import { getUsageStats } from '@/api/user'
 import { kbStatusMap, docStatusMap, embeddingModels, parserOptions, llmModels } from '@/mock/knowledge'
 import { formatSize, formatNumber, fromNow } from '@/utils/format'
 import DocTypeIcon from '@/components/DocTypeIcon.vue'
+import DocPreviewDrawer from '@/components/DocPreviewDrawer.vue'
 
 const route = useRoute()
 const knowledgeStore = useKnowledgeStore()
@@ -481,42 +540,12 @@ async function openChunks(row) {
 
 /* ---------------- 预览 / 下载 ---------------- */
 const previewVisible = ref(false)
-const previewLoading = ref(false)
 const previewDoc = ref(null)
 
-/** 预览方式：pdf 用 iframe 原生渲染；md/txt/csv 读文本渲染；其余仅提供下载 */
-function previewKind(type) {
-  const t = (type || '').toLowerCase()
-  if (t === 'pdf') return 'pdf'
-  if (['md', 'txt', 'csv'].includes(t)) return 'text'
-  return 'other'
-}
-
-async function openPreview(row) {
+/** 打开文档预览（加载与渲染逻辑统一收敛在 DocPreviewDrawer 组件内） */
+function openPreview(row) {
+  previewDoc.value = row
   previewVisible.value = true
-  previewLoading.value = true
-  previewDoc.value = { id: row.id, name: row.name, type: row.type, kind: previewKind(row.type) }
-  try {
-    const blob = await fetchDocumentFile(row.id)
-    if (previewDoc.value.kind === 'pdf') {
-      previewDoc.value.url = URL.createObjectURL(blob)
-    } else if (previewDoc.value.kind === 'text') {
-      const text = await blob.text()
-      previewDoc.value.html =
-        previewDoc.value.type.toLowerCase() === 'md' ? renderMarkdown(text) : null
-      if (!previewDoc.value.html) previewDoc.value.plain = text
-    }
-  } catch (e) {
-    ElMessage.error(e.message || '文件加载失败')
-    previewVisible.value = false
-  } finally {
-    previewLoading.value = false
-  }
-}
-
-function closePreview() {
-  if (previewDoc.value?.url) URL.revokeObjectURL(previewDoc.value.url)
-  previewDoc.value = null
 }
 
 async function handleDownload(row) {
@@ -551,6 +580,222 @@ async function runRetrieval() {
   } finally {
     retrieving.value = false
   }
+}
+
+/* ---------------- 检索评测（golden QA · HitRate@5 / MRR@5，精排关/开对比） ---------------- */
+const dataset = ref(null)
+const evalRunning = ref(false)
+const evalProgress = ref(0)
+const evalReport = ref(null)
+let evalAborted = false
+
+/** 进入评测 tab 时懒加载数据集（public/datasets，随构建产物分发） */
+watch(activeTab, (t) => {
+  if (t === 'eval' && !dataset.value) {
+    fetch('/datasets/golden-qa.json')
+      .then((r) => r.json())
+      .then((d) => (dataset.value = d))
+      .catch(() => ElMessage.error('评测数据集加载失败'))
+  }
+})
+
+/** 关键词命中（最严格口径）：目标文档 + 任一关键词出现在切片内容 */
+function kwHit(r, c) {
+  return (
+    (r.docName || '').includes(c.docNameContains) &&
+    (c.keywords || []).some((k) => (r.content || '').includes(k))
+  )
+}
+
+/**
+ * 命中判定 v2：目标文档内「锚点切片 ±1」窗口（相邻切片是连续正文的切分，
+ * 语义等价换位不再误判脱靶），关键词命中始终兜底。
+ */
+function hitRank(results, c, anchorIdx) {
+  const inDoc = (r) => (r.docName || '').includes(c.docNameContains)
+  const idx = (results || []).findIndex((r) => {
+    if (!inDoc(r)) return false
+    if (kwHit(r, c)) return true
+    return anchorIdx != null && r.chunkIndex != null && Math.abs(r.chunkIndex - anchorIdx) <= 1
+  })
+  return idx === -1 ? 0 : idx + 1
+}
+
+/** 校准轮（精排关 TopK=10，不计分）：定位每条用例的目标切片锚点 */
+async function calibrate(c) {
+  try {
+    const res = await retrievalTest({
+      kbId: route.params.id,
+      query: c.question,
+      topK: 10,
+      threshold: 0,
+      rerank: false
+    })
+    const hit = (res.results || []).find((r) => kwHit(r, c))
+    return hit && hit.chunkIndex != null ? hit.chunkIndex : null
+  } catch {
+    return null
+  }
+}
+
+/** Bootstrap 95% 置信区间：对逐条指标（RR / 命中 0-1）重采样 1000 次取 2.5/97.5 分位 */
+function bootstrapCI(values, iterations = 1000) {
+  if (!values.length) return [0, 0]
+  const stats = []
+  for (let i = 0; i < iterations; i++) {
+    let s = 0
+    for (let j = 0; j < values.length; j++) s += values[(Math.random() * values.length) | 0]
+    stats.push(s / values.length)
+  }
+  stats.sort((a, b) => a - b)
+  return [stats[Math.floor(iterations * 0.025)], stats[Math.ceil(iterations * 0.975) - 1]]
+}
+
+function median(arr) {
+  if (!arr.length) return 0
+  const s = [...arr].sort((a, b) => a - b)
+  const mid = s.length >> 1
+  return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2)
+}
+
+async function runEval() {
+  const cases = dataset.value?.cases || []
+  if (!cases.length) return
+  evalRunning.value = true
+  evalAborted = false
+  evalProgress.value = 0
+  evalReport.value = null
+  const rows = cases.map((c) => ({ ...c, anchorText: '', offRank: 0, onRank: 0, offMs: 0, onMs: 0, onRoute: '' }))
+  const totalSteps = cases.length * 3
+  let done = 0
+  let completed = 0
+  for (let i = 0; i < cases.length; i++) {
+    const c = cases[i]
+    const row = rows[i]
+    // 第 1 步：校准轮，定位目标切片（不计分）
+    const anchorIdx = await calibrate(c)
+    done += 1
+    evalProgress.value = Math.round((done / totalSteps) * 100)
+    row.anchorText = anchorIdx != null ? `#${anchorIdx}` : '关键词'
+    // 第 2/3 步：精排关、开各检索一次
+    for (const rerank of [false, true]) {
+      const key = rerank ? 'on' : 'off'
+      const t0 = performance.now()
+      try {
+        const res = await retrievalTest({
+          kbId: route.params.id,
+          query: c.question,
+          topK: 5,
+          threshold: 0,
+          rerank
+        })
+        row[`${key}Rank`] = hitRank(res.results, c, anchorIdx)
+        row[`${key}Ms`] = Math.round(performance.now() - t0)
+        if (rerank) row.onRoute = res.route || 'rerank'
+      } catch {
+        /* 单条失败记 0 分，不中断整体评测 */
+      }
+      done += 1
+      evalProgress.value = Math.round((done / totalSteps) * 100)
+    }
+    if (evalAborted) break
+    completed += 1
+  }
+  const evaluated = rows.slice(0, completed)
+  const n = evaluated.length
+  const avg = (a) => (a.length ? Math.round(a.reduce((s, v) => s + v, 0) / a.length) : 0)
+  evalReport.value = {
+    rows,
+    metrics: {
+      cases: n,
+      anchored: evaluated.filter((r) => r.anchorText !== '关键词').length,
+      offHitRate: n ? evaluated.filter((r) => r.offRank).length / n : 0,
+      onHitRate: n ? evaluated.filter((r) => r.onRank).length / n : 0,
+      offMRR: n ? evaluated.reduce((s, r) => s + (r.offRank ? 1 / r.offRank : 0), 0) / n : 0,
+      onMRR: n ? evaluated.reduce((s, r) => s + (r.onRank ? 1 / r.onRank : 0), 0) / n : 0,
+      offMrrCI: bootstrapCI(evaluated.map((r) => (r.offRank ? 1 / r.offRank : 0))),
+      onMrrCI: bootstrapCI(evaluated.map((r) => (r.onRank ? 1 / r.onRank : 0))),
+      offHitCI: bootstrapCI(evaluated.map((r) => (r.offRank ? 1 : 0))),
+      onHitCI: bootstrapCI(evaluated.map((r) => (r.onRank ? 1 : 0))),
+      offMsMed: median(evaluated.map((r) => r.offMs).filter((v) => v > 0)),
+      onMsMed: median(evaluated.map((r) => r.onMs).filter((v) => v > 0)),
+      offMsAvg: avg(evaluated.map((r) => r.offMs).filter((v) => v > 0)),
+      onMsAvg: avg(evaluated.map((r) => r.onMs).filter((v) => v > 0)),
+      onSkipped: evaluated.filter((r) => r.onRoute === 'skipped').length
+    }
+  }
+  evalRunning.value = false
+  if (!evalAborted) ElMessage.success('评测完成')
+}
+
+function stopEval() {
+  evalAborted = true
+}
+
+const evalMetricCards = computed(() => {
+  const m = evalReport.value?.metrics
+  if (!m) return []
+  const ciPct = (c) => `${(c[0] * 100).toFixed(0)}–${(c[1] * 100).toFixed(0)}%`
+  const ci3 = (c) => `${c[0].toFixed(3)}–${c[1].toFixed(3)}`
+  return [
+    {
+      label: 'HitRate@5 · 未精排',
+      value: `${(m.offHitRate * 100).toFixed(0)}%`,
+      sub: `命中 ${Math.round(m.offHitRate * m.cases)}/${m.cases} · 95%CI ${ciPct(m.offHitCI)}`
+    },
+    {
+      label: 'HitRate@5 · Rerank',
+      value: `${(m.onHitRate * 100).toFixed(0)}%`,
+      sub: `命中 ${Math.round(m.onHitRate * m.cases)}/${m.cases} · 95%CI ${ciPct(m.onHitCI)}`
+    },
+    {
+      label: 'MRR@5（开 / 关）',
+      value: `${m.onMRR.toFixed(3)} / ${m.offMRR.toFixed(3)}`,
+      sub: `95%CI 开 ${ci3(m.onMrrCI)} · 关 ${ci3(m.offMrrCI)}`
+    },
+    {
+      label: '耗时中位（开 / 关）',
+      value: `${m.onMsMed} / ${m.offMsMed} ms`,
+      sub: `均值 开 ${m.onMsAvg} / 关 ${m.offMsAvg} ms · 精排跳过 ${m.onSkipped}/${m.cases}`
+    }
+  ]
+})
+
+const hardCount = computed(
+  () => (evalReport.value?.rows || []).filter((r) => !r.offRank || !r.onRank).length
+)
+
+/** 导出未命中用例（含两种模式的排名与锚点），作为后续检索改动的回归集 */
+function exportHardCases() {
+  const list = (evalReport.value?.rows || []).filter((r) => !r.offRank || !r.onRank)
+  if (!list.length) return
+  const payload = {
+    dataset: 'kb-eval-hard-cases',
+    exportedAt: new Date().toISOString(),
+    hitCriteria: 'anchor chunk ±1 or keyword',
+    cases: list.map(
+      ({ id, question, docNameContains, keywords, note, anchorText, offRank, onRank, offMs, onMs }) => ({
+        id,
+        question,
+        docNameContains,
+        keywords,
+        note,
+        anchorText,
+        offRank,
+        onRank,
+        offMs,
+        onMs
+      })
+    )
+  }
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  )
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'hard-cases.json'
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 /* ---------------- 配置 ---------------- */
@@ -730,6 +975,33 @@ onMounted(async () => {
   margin-top: 2px;
   font-size: 17px;
   font-weight: 600;
+}
+
+/* 检索评测 tab */
+.eval-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.eval-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.eval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.metric-card .m-sub {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--c-text-4);
 }
 
 .detail-tabs {
@@ -990,71 +1262,5 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.8;
   color: var(--c-text-2);
-}
-
-/* 文档预览抽屉 */
-.doc-preview {
-  height: 100%;
-}
-
-.text-frame {
-  max-height: 100%;
-  overflow: auto;
-  padding: 4px 6px;
-}
-
-.text-frame .plain-text {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.8;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--c-text-1);
-}
-
-.text-frame .md-body {
-  font-size: 14px;
-  line-height: 1.9;
-  color: var(--c-text-1);
-}
-
-.text-frame .md-body h1,
-.text-frame .md-body h2,
-.text-frame .md-body h3 {
-  margin: 18px 0 10px;
-  line-height: 1.4;
-}
-
-.text-frame .md-body p,
-.text-frame .md-body ul,
-.text-frame .md-body ol,
-.text-frame .md-body pre {
-  margin: 10px 0;
-}
-
-.text-frame .md-body code {
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--c-bg-soft, rgba(127, 127, 127, 0.12));
-  font-size: 13px;
-}
-
-.text-frame .md-body table {
-  border-collapse: collapse;
-  margin: 10px 0;
-}
-
-.text-frame .md-body th,
-.text-frame .md-body td {
-  border: 1px solid rgba(127, 127, 127, 0.3);
-  padding: 6px 10px;
-}
-
-.preview-fallback {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding-top: 12vh;
 }
 </style>

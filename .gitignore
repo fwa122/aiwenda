@@ -28,6 +28,8 @@ logs/
 celerybeat-schedule
 
 # ===== 运行时数据 =====
+# P1-4 数据库/上传目录备份产物（含业务数据，严禁提交）
+backups/
 uploads/
 
 # ===== 系统与编辑器 =====
@@ -36,3 +38,4 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+.trae/

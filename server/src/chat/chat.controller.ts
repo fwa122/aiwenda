@@ -7,6 +7,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/current-user.decorator';
@@ -24,6 +25,8 @@ export class ChatController {
    * 返回附件 id（随 completions 的 attachmentIds 传入，一次性消费）。
    */
   @Post('attachments')
+  // 附件同步提取文本，成本高：单 IP 每分钟 20 次
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async uploadAttachments(@CurrentUser('id') userId: string, @Body() dto: CreateAttachmentsDto) {
     return this.chatService.createAttachments(userId, dto.files);
   }
@@ -31,8 +34,12 @@ export class ChatController {
   /**
    * SSE 问答。手写 res 流（不走响应拦截器），
    * 事件协议见 docs/开发文档.md 6.4.3
+   *
+   * 限流：每次调用消耗 LLM token，是全系统最高成本接口 —— 单 IP 每分钟 15 次，
+   * 超限由全局 ThrottlerGuard 抛 429（异常过滤器转成统一 JSON，此时 SSE 未开始）。
    */
   @Post('completions')
+  @Throttle({ default: { limit: 15, ttl: 60_000 } })
   async completions(
     @CurrentUser('id') userId: string,
     @Req() req: Request,
@@ -71,6 +78,8 @@ export class ChatController {
    * 与 GET /suggestions（首页推荐位）不同 method 同路径，互不影响。
    */
   @Post('suggestions')
+  // 追问建议同样走 LLM（glm-4-flash）：单 IP 每分钟 30 次
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   followupSuggestions(@Body() dto: ChatSuggestionsDto) {
     return this.chatService.followupSuggestions(dto);
   }

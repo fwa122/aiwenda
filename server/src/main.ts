@@ -21,6 +21,10 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
 
+  // 信任一层反代（nginx 已设置 X-Forwarded-For）：
+  // 让 req.ip 取到真实客户端 IP，避免全局限流把所有用户算成同一个 127.0.0.1 桶
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   // JSON body 放宽至 12MB：附件上传走 base64 JSON（5MB 文件 base64 后约 6.7MB）
   app.use(express.json({ limit: '12mb' }));
 

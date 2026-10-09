@@ -241,6 +241,18 @@ export function streamAnswer(payload, handlers = {}) {
         body: JSON.stringify({ ...payload, stream: true }),
         signal: ctrl.signal
       })
+      // 限流(429)/鉴权等错误返回 JSON 而非 SSE 流：直接读流会静默结束导致界面卡住
+      if (!res.ok) {
+        let msg = `请求失败（HTTP ${res.status}）`
+        try {
+          const body = await res.json()
+          msg = body?.message || msg
+        } catch (e) {
+          /* 非 JSON 响应，用默认文案 */
+        }
+        handlers.onError?.(new Error(msg))
+        return
+      }
       const reader = res.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''

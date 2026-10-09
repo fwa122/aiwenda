@@ -1,9 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from ..config import settings
 from ..db import fetch_one
+from .internal import verify_internal
 
-router = APIRouter()
+# P2 改造：与 /internal/* 同级鉴权——健康接口原本匿名可达，会泄露 provider/model 拓扑
+router = APIRouter(dependencies=[Depends(verify_internal)])
 
 
 @router.get('/health')

@@ -23,17 +23,28 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let code = status;
+    let code: number = status;
     let message: unknown = '服务器内部错误';
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
+      // code 默认跟随 HTTP 状态码（字符串形式响应如 ThrottlerException 没有 body.code）
+      code = status;
       const r: any = exception.getResponse();
       if (typeof r === 'string') {
         message = r;
       } else if (r && typeof r === 'object') {
         message = r.message ?? exception.message;
         code = r.code ?? status;
+      }
+      // 限流异常默认是英文 "ThrottlerException: Too Many Requests"，替换为友好文案；
+      // 业务自定义的 429（如登录失败锁定）保留原 message
+      if (
+        status === HttpStatus.TOO_MANY_REQUESTS &&
+        typeof message === 'string' &&
+        message.startsWith('ThrottlerException')
+      ) {
+        message = '操作过于频繁，请稍后再试';
       }
     }
 

@@ -43,15 +43,26 @@ REWRITE_SYSTEM_PROMPT = (
 )
 
 
+# 指代/省略信号词（宽松匹配，宁多改写不误跳过）：问题命中才走 LLM 改写。
+# 误判「需要」只多一次轻量模型调用；反向误判会让带指代的问题直接检索导致召回差。
+COREF_PATTERN = re.compile(r'它|这|那|上述|上面|前面|刚才|其中|该|继续|还有|再|呢')
+
+
+def needs_rewrite(question: str) -> bool:
+    """自包含问题跳过 LLM 改写省一次调用：含指代信号词，或问题过短（大概率省略主体）才改写。"""
+    return len(question) <= 10 or bool(COREF_PATTERN.search(question))
+
+
 def rewrite_query(question: str, history: list) -> str:
-    """有历史时用 LLM 改写检索查询；改写失败回退原问题，不阻断。"""
-    if not history:
+    """有历史且问题非自包含时用轻量模型改写检索查询；改写失败回退原问题，不阻断。"""
+    if not history or not needs_rewrite(question):
         return question
     try:
         messages: list[dict] = [{'role': 'system', 'content': REWRITE_SYSTEM_PROMPT}]
         messages.extend({'role': h.role, 'content': h.content} for h in history[-6:])
         messages.append({'role': 'user', 'content': question})
-        rewritten = llm.chat_once(messages, temperature=0.1, max_tokens=100)
+        # 轻量任务用 flash 档：改写是 100 token 内的小任务，走默认 max 档纯属浪费
+        rewritten = llm.chat_once(messages, model='qwen3.7-flash', temperature=0.1, max_tokens=100)
         rewritten = rewritten.strip().strip('"“”').strip()
         return rewritten or question
     except Exception as exc:  # noqa: BLE001
@@ -200,14 +211,17 @@ def extract(body: ExtractRequest):
 @router.post('/search')
 def search(body: SearchRequest):
     start = time.time()
+    meta: dict = {}
     results = retrieval.search(
         body.kbIds, body.query, body.topK, body.threshold,
-        hybrid=body.hybrid, rerank=body.rerank,
+        hybrid=body.hybrid, rerank=body.rerank, meta=meta,
     )
     return {
         'results': results,
         'elapsedMs': int((time.time() - start) * 1000),
         'total': len(results),
+        # 自适应精排路由决策（rerank=true 时有值）：rerank=已精排 / skipped=赢家明确跳过
+        'route': meta.get('route'),
     }
 
 
@@ -335,7 +349,7 @@ class SuggestionsRequest(BaseModel):
 
 @router.post('/chat/suggestions')
 def chat_suggestions(body: SuggestionsRequest):
-    """后续问题建议：glm-4-flash 低 max_tokens 生成 3 个追问；任何异常返回空数组"""
+    """后续问题建议：qwen3.7-flash 低 max_tokens 生成 3 个追问；任何异常返回空数组"""
     try:
         question = (body.question or '').strip()[:1000]
         answer = (body.answer or '').strip()[:SUGGESTION_ANSWER_MAX_CHARS]
@@ -343,7 +357,7 @@ def chat_suggestions(body: SuggestionsRequest):
             return {'suggestions': []}
         messages: list[dict] = [{'role': 'system', 'content': SUGGESTION_SYSTEM_PROMPT}]
         messages.append({'role': 'user', 'content': f'用户提问：{question}\n\n助手回答：{answer}'})
-        text = llm.chat_once(messages, model='glm-4-flash', temperature=0.8, max_tokens=200)
+        text = llm.chat_once(messages, model='qwen3.7-flash', temperature=0.8, max_tokens=200)
         match = re.search(r'\[[\s\S]*\]', text or '')
         if not match:
             return {'suggestions': []}
@@ -371,7 +385,7 @@ class TitleRequest(BaseModel):
 
 @router.post('/chat/title')
 def chat_title(body: TitleRequest):
-    """会话自动命名：glm-4-flash 低 token 生成 16 字内标题；任何异常返回空串"""
+    """会话自动命名：qwen3.7-flash 低 token 生成 16 字内标题；任何异常返回空串"""
     try:
         question = (body.question or '').strip()[:500]
         answer = (body.answer or '').strip()[:500]
@@ -379,7 +393,7 @@ def chat_title(body: TitleRequest):
             return {'title': ''}
         messages: list[dict] = [{'role': 'system', 'content': TITLE_SYSTEM_PROMPT},
                     {'role': 'user', 'content': f'用户提问：{question}\n\n助手回答：{answer}'}]
-        text = llm.chat_once(messages, model='glm-4-flash', temperature=0.3, max_tokens=50)
+        text = llm.chat_once(messages, model='qwen3.7-flash', temperature=0.3, max_tokens=50)
         match = re.search(r'\{[\s\S]*\}', text or '')
         if not match:
             return {'title': ''}

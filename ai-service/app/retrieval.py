@@ -5,9 +5,11 @@
 - 融合（hybrid / rerank 开启）：向量 top-N 与词法 top-N **独立召回**后取并集，
   用 Reciprocal Rank Fusion（RRF, k=60）融合重排。
 
-- Rerank（rerank=true）：RRF 候选再经智谱 rerank 模型精排（query-doc 交叉打分），
-  失败时回退 RRF 排名，不阻断检索。score 字段保持原语义（向量分优先），
-  rerank 只影响排序。
+- Rerank（rerank=true）：对候选（纯向量模式为向量候选，融合模式为 RRF 候选）做智谱
+  rerank 模型交叉精排（query-doc 打分），失败时回退原序，不阻断检索。score 字段
+  保持原语义（向量分优先），rerank 只影响排序。
+  精排与 hybrid 解耦：开精排不再隐式启用混合召回（v0.9.9 前 `hybrid or rerank`
+  耦合导致评测对比混杂了召回通道差异，且词法噪声候选挤占 TopK）。
 
 词法召回基于 pg_trgm 的 word_similarity（短查询对长文本友好，无需分词器），
 GIN 索引（chunks_content_trgm_idx，启动时由 db.ensure_indexes 创建）加速过滤。
@@ -100,6 +102,7 @@ def _rerank(query: str, rows: list[dict]) -> list[dict]:
                     'model': settings.rerank_model,
                     'query': query[:4000],
                     'documents': [(r['content'] or '')[:4000] for r in rows],
+                    'top_n': len(rows),
                 },
             )
             resp.raise_for_status()
@@ -113,6 +116,19 @@ def _rerank(query: str, rows: list[dict]) -> list[dict]:
     except Exception as exc:  # noqa: BLE001
         print(f'[retrieval] rerank 失败，回退 RRF 排序: {exc}')
         return rows
+
+
+def _skip_rerank(top1: float, top2: float) -> bool:
+    """自适应精排路由：Top1 分差 ≥ rerank_skip_gap 视为「赢家明确」，跳过精排。
+
+    阈值由 golden 集逐用例地面真值标定（v0.9.11）：跳过集合 {q07,q12,q18}
+    逐用例重排 delta=0，指标零损伤；分差不预测精排收益，安全分离带仅
+    (0.0272, 0.0339]，0.03 双侧 margin ≥0.0039。
+    """
+    gap = float(settings.rerank_skip_gap)
+    if gap <= 0:
+        return False
+    return (top1 - top2) >= gap
 
 
 def _to_ref(row: dict, score: float) -> dict:
@@ -138,6 +154,7 @@ def search(
     threshold: float = 0.28,
     hybrid: bool = False,
     rerank: bool = False,
+    meta: dict | None = None,
 ) -> list[dict]:
     if not kb_ids or not query.strip():
         return []
@@ -151,7 +168,7 @@ def search(
     if not rows:
         return []
 
-    use_fusion = bool(hybrid or rerank)
+    use_fusion = bool(hybrid)
 
     # 纯向量模式：沿用阈值过滤，行为不变
     if not use_fusion:
@@ -161,6 +178,16 @@ def search(
             if score < threshold:
                 continue
             results.append(_to_ref(r, score))
+        if rerank:
+            # 自适应路由：赢家明确（Top1 分差够大）跳过精排，省一次模型调用
+            if len(results) >= 2 and _skip_rerank(float(results[0]['score']), float(results[1]['score'])):
+                if meta is not None:
+                    meta['route'] = 'skipped'
+                return results[:top_k]
+            if meta is not None:
+                meta['route'] = 'rerank'
+            # 交叉精排：对向量候选重排（与 hybrid 解耦，不再隐式开启融合召回）
+            results = _rerank(query, results)
         return results[:top_k]
 
     # —— 融合模式：词法独立召回 → 并集 → 双路排名 → RRF ——
@@ -214,12 +241,20 @@ def search(
     fused.sort(key=lambda x: x[0], reverse=True)
 
     ordered = [r for _, r in fused]
-    if rerank:
-        # 交叉精排：RRF 候选 → rerank 模型 → 最终排序
-        ordered = _rerank(query, ordered)
 
     # 展示分：优先向量分，词法独有命中回退词法分
     def display_score(r: dict) -> float:
         return float(r['score']) if r.get('score') is not None else float(r.get('_lex') or 0.0)
+
+    if rerank:
+        # 自适应路由：展示分（向量分优先）Top1 分差够大则跳过精排
+        if len(ordered) >= 2 and _skip_rerank(display_score(ordered[0]), display_score(ordered[1])):
+            if meta is not None:
+                meta['route'] = 'skipped'
+            return [_to_ref(r, display_score(r)) for r in ordered[:top_k]]
+        if meta is not None:
+            meta['route'] = 'rerank'
+        # 交叉精排：RRF 候选 → rerank 模型 → 最终排序
+        ordered = _rerank(query, ordered)
 
     return [_to_ref(r, display_score(r)) for r in ordered[:top_k]]

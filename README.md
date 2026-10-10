@@ -4,7 +4,7 @@
 
 基于 RAG（检索增强生成）的企业知识库问答系统。用户上传企业文档，系统完成解析、切片、向量化后，即可通过自然语言提问并获得**可溯源**的回答。
 
-> 当前阶段：**全栈已交付，支持一键 Docker 部署**。前端（Vue 3）、Node BFF（NestJS）、Python AI 服务（FastAPI + Celery）全部完成并联调通过，RAG 全链路真实跑通（解析 → 切片 → 向量化 → 混合检索 → LLM 流式生成 → 引用溯源）。项目持续迭代至 v0.9.24：完成两轮安全专项加固（Redis 认证、防爆破、JWT 刷新轮换）、建成检索评测体系（20 条 golden QA + 精排路由可观测）、接入千问多模型渠道与嵌入内容级缓存、数据库每日自动备份、**自动化测试 104 用例 + 覆盖率门槛 + GitHub Actions CI/CD**（四 job 并行 + tag 自动发版），并提供开箱即用的 Docker Compose 全栈编排（首启自动迁移 + 播种）。详见[更新日志](#更新日志)。
+> 当前阶段：**全栈已交付，支持一键 Docker 部署**。前端（Vue 3）、Node BFF（NestJS）、Python AI 服务（FastAPI + Celery）全部完成并联调通过，RAG 全链路真实跑通（解析 → 切片 → 向量化 → 混合检索 → LLM 流式生成 → 引用溯源）。项目持续迭代至 v0.9.25：**上传文档存储从本地磁盘切换为 MinIO 对象存储**（S3 兼容，单机到多实例平滑扩展，server 启动自动建桶 + 存量文档迁移脚本 + 桶级备份），此前已完成两轮安全专项加固（Redis 认证、防爆破、JWT 刷新轮换）、检索评测体系（20 条 golden QA + 精排路由可观测）、千问多模型渠道与嵌入内容级缓存、数据库每日自动备份、**自动化测试 104 用例 + 覆盖率门槛 + GitHub Actions CI/CD**（四 job 并行 + tag 自动发版），并提供开箱即用的 Docker Compose 全栈编排（首启自动迁移 + 播种）。详见[更新日志](#更新日志)。
 
 ---
 
@@ -12,7 +12,7 @@
 
 ### 方式一：使用现成镜像（推荐，免构建）
 
-镜像已发布到 Docker Hub（`gujinyi666/aiwenda-frontend` / `aiwenda-server` / `aiwenda-ai`），克隆仓库后直接拉取运行。整个系统打包为 6 个容器（前端 nginx / Node BFF / Python AI 服务 / Celery worker / PostgreSQL+pgvector / Redis），**只需安装 Docker，无需 Node/Python 环境，也不需要本地构建**（postgres/redis 用公共镜像自动拉取）。
+镜像已发布到 Docker Hub（`gujinyi666/aiwenda-frontend` / `aiwenda-server` / `aiwenda-ai`），克隆仓库后直接拉取运行。整个系统打包为 7 个容器（前端 nginx / Node BFF / Python AI 服务 / Celery worker / PostgreSQL+pgvector / Redis / MinIO 对象存储），**只需安装 Docker，无需 Node/Python 环境，也不需要本地构建**（postgres/redis/minio 用公共镜像自动拉取）。
 
 **前提**：Docker Desktop（Windows/Mac）或 Docker Engine（Linux）、git、一个智谱 API Key（[开放平台](https://open.bigmodel.cn/) 注册申请，有免费额度；默认生成/向量/rerank/OCR 渠道）。推荐再配一个千问 DashScope API Key（[阿里云百炼](https://bailian.console.aliyun.com/)，可选）：获得 qwen / deepseek 系列生成模型与第二嵌入渠道。
 
@@ -34,6 +34,7 @@ cp .env.docker.example .env
 | `REDIS_PASSWORD` | Redis 访问密码（未配置 compose 拒绝启动） | `openssl rand -hex 24` |
 | `ADMIN_INITIAL_PASSWORD` | 首次播种 admin 账号的初始密码（登录后请修改） | 自定义强密码 |
 | `INTERNAL_TOKEN` | BFF↔AI 服务内部令牌（未配置内部接口 fail-closed） | `openssl rand -hex 32` |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | MinIO 对象存储凭据（未配置 compose 拒绝启动；密码含特殊字符请用 hex） | `openssl rand -hex 24` |
 | `ZHIPU_API_KEY` | 智谱 API Key（默认生成/向量/rerank/OCR 渠道） | 开放平台控制台复制 |
 | `QIANWEN_API_KEY` | 千问 DashScope Key（可选：qwen/deepseek 生成模型 + 嵌入渠道） | 阿里云百炼控制台复制 |
 | `MOONSHOT_API_KEY` | Kimi K2.6（可选，不填则无 Kimi 模型） | Moonshot 平台申请 |
@@ -57,7 +58,18 @@ docker compose -f docker-compose.prod.yml down            # 删容器（数据�
 docker compose -f docker-compose.prod.yml down -v         # ⚠️ 连数据一起清空（重置环境才用）
 ```
 
-> 数据存于命名卷 `kb-prod_pg_data` / `kb-prod_redis_data` / `kb-prod_uploads_data`。
+> 数据存于命名卷 `kb-prod_pg_data` / `kb-prod_redis_data` / `kb-prod_minio_data`。
+>
+> **v0.9.25 升级（存储切换 MinIO）**：新增 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` 必填项与 minio 容器，请先 `cp .env.docker.example .env` 补齐再 `pull && up -d`（桶由 server 启动时自动创建）。老版本 `kb-prod_uploads_data` 卷中的存量文档需迁移一次（幂等脚本，重复执行安全）：
+>
+> ```bash
+> docker run --rm --network kb-prod_default \
+>   -v kb-prod_uploads_data:/uploads:ro \
+>   -e UPLOAD_ROOT=/uploads -e MINIO_ENDPOINT=minio:9000 \
+>   -e MINIO_ACCESS_KEY=<.env 的 MINIO_ROOT_USER> \
+>   -e MINIO_SECRET_KEY=<.env 的 MINIO_ROOT_PASSWORD> \
+>   gujinyi666/aiwenda-server:latest node scripts/migrate-uploads-to-minio.mjs
+> ```
 >
 > **国内网络拉不动基础镜像时**：`docker pull docker.m.daocloud.io/library/python:3.12-slim && docker tag docker.m.daocloud.io/library/python:3.12-slim python:3.12-slim`（`nginx:alpine`、`node:24-slim` 同理），或在 Docker Desktop 设置中配置镜像加速。
 >
@@ -133,7 +145,7 @@ celery -A app.tasks:celery_app worker --pool=solo --loglevel=info
 | RAG 内核 | PDF（标题启发式 + 表格转 Markdown + 扫描件 OCR 兜底）/docx/md/txt/csv 解析；标题层级切片；双渠道嵌入（智谱 embedding-3 / 千问 qwen3.7-text-embedding，1024 维）+ pgvector HNSW；向量 + pg_trgm 词法双路召回 + RRF 融合 + rerank 精排（与召回通道解耦 + 分差自适应路由跳过）；多轮查询改写（指代消解 + 自包含问题跳过）；相邻片段合并；context 字符预算截断；嵌入内容级缓存（重解析零 API 消耗）；三道防幻觉机制 |
 | 系统设置 | 模型/检索/安全/存储分区配置、API 密钥（哈希存储 + 脱敏）、用量统计（daily_stats 闭环 + 月度配额）、操作日志、用户配额 |
 | 安全加固 | 内部接口令牌鉴权（fail-closed）、Redis 全链路密码认证（fail-fast）、登录账号级防爆破（5 次失败锁 15 分钟）+ IP 限流（计数存 Redis，跨重启/扩容存活）、越权（IDOR）修复、上传白名单 + 大小限制 + magic bytes、CORS 白名单、JWT 强密钥启动校验、路径穿越防护、XSS/反向标签劫持防护 |
-| 运维保障 | 数据库与上传目录每日自动备份（每类保留 7 份，附恢复演练）、nginx gzip 压缩 + 安全响应头 + index.html 不缓存（发版即时生效）、嵌入缓存 30 天 TTL 定期清理 |
+| 运维保障 | 数据库每日自动备份 + MinIO 桶每日镜像（每类保留 7 份，附恢复演练）、nginx gzip 压缩 + 安全响应头 + index.html 不缓存（发版即时生效）、嵌入缓存 30 天 TTL 定期清理 |
 
 ---
 
@@ -142,7 +154,7 @@ celery -A app.tasks:celery_app worker --pool=solo --loglevel=info
 - **前端**：Vue 3（组合式 API）、Vite 6、Vue Router、Pinia、Element Plus、markdown-it、highlight.js、DOMPurify、dayjs
 - **Node BFF**：NestJS 12 + TypeScript 5.9 + Prisma 6 + JWT（bcrypt）+ Multer
 - **AI 服务**：Python FastAPI + Celery 5（Redis broker）+ psycopg3 + PyMuPDF + python-docx + OpenAI 兼容 SDK
-- **存储**：PostgreSQL 16 + pgvector（业务数据 + 向量，HNSW 索引）+ Redis 7（队列）+ 本地磁盘（`server/uploads/`，MinIO 为可选演进）
+- **存储**：PostgreSQL 16 + pgvector（业务数据 + 向量，HNSW 索引）+ Redis 7（队列）+ MinIO（S3 兼容对象存储，上传原始文档，桶随 server 启动自动创建）
 - **模型**：千问 DashScope（qwen3.8-max / qwen3.7-flash / deepseek-v4-pro 生成 + qwen3.7-text-embedding 向量，OpenAI 兼容端点）；智谱 BigModel（GLM 生成 + embedding-3 向量 + rerank 精排 + glm-ocr）；Moonshot Kimi K2.6（可选生成模型）
 
 ---
@@ -155,8 +167,8 @@ AI问答/
 │   ├── 开发文档.md          # 架构、目录、进度、模块设计、UI 规范、踩坑记录
 │   ├── 接口文档.md          # 前后端接口契约（含 SSE 协议、内部接口、差异清单）
 │   └── 后端开发方案.md      # 架构设计、选型分析、数据库设计、实施记录
-├── docker-compose.yml       # 全栈编排：nginx + server + ai-service + worker + postgres + redis
-├── docker-compose.infra.yml # 开发模式基础设施：kb-postgres(pgvector) + kb-redis（MinIO 可选）
+├── docker-compose.yml       # 全栈编排：nginx + server + ai-service + worker + postgres + redis + minio
+├── docker-compose.infra.yml # 开发模式基础设施：kb-postgres(pgvector) + kb-redis + kb-minio
 ├── .env.docker.example      # Docker 部署环境变量模板
 ├── nginx/default.conf       # 前端托管 + /api 反代（SSE 关缓冲）
 ├── frontend/Dockerfile      # 多阶段：Node 构建 dist → nginx 托管
@@ -169,9 +181,10 @@ AI问答/
 │   │   ├── conversation/ chat/          # 会话 CRUD、SSE 编排、附件
 │   │   ├── settings/ api-key/ stats/ log/
 │   │   ├── integrations/ai-service.client.ts   # Python 服务转发（含令牌）
+│   │   ├── storage/storage.module.ts            # MinIO 对象存储（上传/预览/删除文档）
 │   │   └── common/kb-access.ts          # 知识库统一权限模型
 │   ├── prisma/              # schema（11 表）+ seed + migrations
-│   └── uploads/<kbId>/      # 文档落盘目录（.gitignore）
+│   └── scripts/migrate-uploads-to-minio.mjs  # 存量文档迁移（v0.9.25 一次性）
 ├── ai-service/              # Python AI 服务（FastAPI + Celery）
 │   └── app/
 │       ├── api/             # /internal/*（令牌鉴权）+ /internal/health
@@ -179,7 +192,7 @@ AI问答/
 │       ├── parser.py        # 解析（PDF/docx/md/txt/csv + OCR 兜底）
 │       ├── chunker.py       # 标题层级切片
 │       ├── retrieval.py     # 向量+词法双路召回、RRF、rerank
-│       ├── tasks.py         # Celery 解析任务（重试策略 + 路径防护）
+│       ├── tasks.py         # Celery 解析任务（MinIO 拉取 tempfile + 重试策略）
 │       └── db.py config.py embedding.py ids.py
 └── frontend/
     └── src/
@@ -207,6 +220,9 @@ AI问答/
 
 | 版本 | 日期 | 主题 |
 | --- | --- | --- |
+| v0.9.27 | 2026-10-10 | 会话吊销专项（架构评审批次二）：tokenVersion 令牌版本号——改密/封禁即刻踢下线（含 7 天 refresh 白名单窗口与 2h access 残留），jwt.strategy 升级状态比对顺带修复封禁延迟与角色快照两个旧问题，老格式令牌平滑兼容；新增 4 个集成用例（合计 19） |
+| v0.9.26 | 2026-10-10 | 可靠性专项（架构评审批次一）：Celery prefork 连接池 fork 安全（惰性开池 + 探活自愈）+ 卡死文档对账（worker -B 内嵌 beat，5 分钟周期重投）+ 解析超时护栏（30/35 分钟）+ 切片唯一索引防双跑 + 内部错误透传收口；顺带修复并发 DDL 竞争 |
+| v0.9.25 | 2026-10-09 | 文档存储切换 MinIO 对象存储（S3 兼容）：storage 模块 fail-fast + 自动建桶、worker 拉取 tempfile 解析、存量迁移脚本、桶级备份、e2e/CI 加 minio 测试实例 |
 | v0.9.24 | 2026-10-09 | 测试纵深三连击：覆盖率只升不降门槛（auth 80% / common 35%）+ 前端 vitest 22 例（markdown 安全 + SSE 解析）+ chat BFF 编排集成 6 例（mock ai-service 全链路），合计 104 用例 |
 | v0.9.23 | 2026-10-09 | 测试体系扩展至 76 用例（单元 17 / 集成 9 / pytest 50）+ GitHub Actions CI/CD 落地（四 job 全绿 + tag 自动发版）；修复 JWT_EXPIRES_IN 漏配导致登录 500 |
 | v0.9.22 | 2026-10-09 | 测试基础设施：vitest 17 个单元测试落地；修复 v0.9.13 多轮历史注入两处缺陷（发给 LLM 的历史顺序颠倒 + 字符预算从最旧开始消耗） |
@@ -243,4 +259,4 @@ AI问答/
 | --- | --- |
 | P3 · 效果优化 | 查询改写效果评估、专用 Rerank 模型扩展、引用高亮原文定位、答案评价闭环分析 |
 | P4 · 运营能力 | 知识库成员权限细化、审计看板、成本统计、A/B 实验 |
-| 生产化 | MinIO 对象存储接入、解析任务对账恢复、HTTPS（域名 + certbot）、nginx upstream 自动跟随（resolver + variable proxy_pass）、重索引接口（reindex）补全 |
+| 生产化 | 解析任务对账恢复、HTTPS（域名 + certbot）、nginx upstream 自动跟随（resolver + variable proxy_pass）、重索引接口（reindex）补全、预签名直传（大文件场景） |

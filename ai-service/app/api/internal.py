@@ -3,6 +3,7 @@ import json
 import re
 import secrets
 import time
+import traceback
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -11,6 +12,15 @@ from pydantic import BaseModel, Field
 from .. import llm, parser, retrieval
 from ..config import settings
 from ..tasks import parse_document
+
+
+def safe_error_message(exc: Exception) -> str:
+    """错误透出白名单：内部异常细节（SQL/连接串/SDK 堆栈）只进服务端日志，
+    不随 SSE/HTTP 透传到 BFF 与前端。ValueError 是业务层有意抛出的可读错误
+    （如「ZHIPU_API_KEY 未配置」），保留原文供管理员排查。"""
+    if isinstance(exc, ValueError):
+        return str(exc)[:200]
+    return 'AI 服务处理失败，请稍后重试'
 
 
 def verify_internal(authorization: str = Header(default='')) -> None:
@@ -197,7 +207,8 @@ def extract(body: ExtractRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f'附件解析失败：{e}')
+        print('[extract] 附件解析失败:', f'{type(e).__name__}: {e}')
+        raise HTTPException(status_code=400, detail='附件解析失败：文件可能损坏或格式不支持')
     finally:
         try:
             os.unlink(tmp_path)
@@ -327,7 +338,9 @@ def chat(body: ChatRequest):
                 'rewrittenQuery': search_query if search_query != body.question else None,
             }})
         except Exception as exc:  # noqa: BLE001
-            yield sse('error', {'message': str(exc)[:300]})
+            # 完整堆栈只进服务端日志；对外仅透出白名单文案（safe_error_message）
+            print('[chat] 流式问答失败:', traceback.format_exc())
+            yield sse('error', {'message': safe_error_message(exc)})
 
     return StreamingResponse(gen(), media_type='text/event-stream')
 

@@ -7,8 +7,8 @@
 #
 # 说明：
 #   - 与本地开发的 docker-compose.infra.yml 通过 project name（kb-prod）隔离，互不影响
-#   - postgres/redis/ai-service 均不映射宿主端口，仅容器网络内可达
-#   - server 与 worker 共享 uploads_data 卷（Node 落盘 /app/uploads，Python 读同路径）
+#   - postgres/redis/minio/ai-service 均不映射宿主端口，仅容器网络内可达
+#   - 上传文档统一存 MinIO 桶（server 写入 / worker 读取，无共享磁盘卷）
 
 name: kb-prod
 
@@ -42,13 +42,19 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost}
       # 首次启动 seed admin 账号用的初始密码（未配置时 seed 跳过 admin 播种）
       - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD}
-    volumes:
-      - uploads_data:/app/uploads
+      # MinIO 对象存储（server 上传/预览/删除文档对象；启动时自动建桶）
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER 未配置}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 未配置}
+      - MINIO_BUCKET=${MINIO_BUCKET:-kb-documents}
+      - MINIO_SECURE=false
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+      minio:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/v1/user/profile').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))\""]
       interval: 15s
@@ -85,8 +91,12 @@ services:
       # 基础设施（容器网络服务名）
       - DATABASE_URL=postgresql://${POSTGRES_USER:-kb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kb}
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/1
-      # 与 server 容器共享的上传目录（worker 直接读取落盘文件）
-      - UPLOAD_ROOT=/app/uploads
+      # MinIO（worker 解析前从桶拉取原始文档到临时文件）
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER 未配置}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 未配置}
+      - MINIO_BUCKET=${MINIO_BUCKET:-kb-documents}
+      - MINIO_SECURE=false
       # 内部令牌（与 server 的 AI_SERVICE_TOKEN 同值，fail-closed）
       - INTERNAL_TOKEN=${INTERNAL_TOKEN}
     depends_on:
@@ -94,21 +104,24 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      minio:
+        condition: service_healthy
     restart: unless-stopped
 
   # Celery worker：与 ai-service 同镜像，消费解析任务；
-  # 必须挂同一个 uploads_data 卷才能读到上传文件
+  # -B 内嵌 beat（单实例标准做法），周期调度对账任务恢复卡死文档；
+  # 原始文档从 MinIO 桶拉取，无需挂载共享磁盘卷
   worker:
     image: kb-ai-service:latest
-    command: celery -A app.tasks worker --loglevel=info --concurrency=2
+    command: celery -A app.tasks worker -B --loglevel=info --concurrency=2
     environment: *ai_env
-    volumes:
-      - uploads_data:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+      minio:
+        condition: service_healthy
     restart: unless-stopped
 
   # ────────────────────────── 基础设施层 ──────────────────────────
@@ -137,7 +150,25 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
+  # MinIO（S3 兼容对象存储）：上传原始文档的唯一存储后端。
+  # 桶由 server 启动时自动创建；端口不映射宿主机（对齐 postgres/redis 纯内网策略）
+  minio:
+    image: minio/minio
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:?MINIO_ROOT_USER 未配置}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 未配置}
+    command: server /data --console-address ':9001'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   pg_data:
   redis_data:
-  uploads_data:
+  minio_data:

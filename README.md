@@ -222,6 +222,7 @@ AI问答/
 
 | 版本 | 日期 | 主题 |
 | --- | --- | --- |
+| v0.9.30 | 2026-10-10 | 部署硬化专项（架构评审批次四）：3 个自建镜像切非 root 运行（node/appuser/nginx-unprivileged uid 101）、7 服务资源限额（deploy.resources.limits）、Redis maxmemory 200mb noeviction（broker 防丢任务）、统一日志轮转（json-file 3×10MB）、补 FLASH_MODEL 编排透传；Linux 全栈 smoke 验证（inspect 三项核对 + 首页/登录链路） |
 | v0.9.29 | 2026-10-10 | 紧急兼容修复：MinIO 官方 2026-09-11 删除 Docker Hub 镜像仓库——三编排切换社区 fork pgsty/minio（命令/环境变量/协议完全兼容，存量卷免迁移）；新环境部署与 CI 拉取恢复可用 |
 | v0.9.28 | 2026-10-10 | 一致性专项（架构评审批次三）：改密/建号口令统一至注册强度（8~32 位字母+数字）、轻量任务模型渠道感知（FLASH_MODEL 回落默认渠道，不再硬编码千问）、注册并发竞态 500 转 409、嵌入缓存建表移出解析热路径、Redis healthcheck + 应用依赖 service_healthy、迁移漂移踩坑文档化 |
 | v0.9.27 | 2026-10-10 | 会话吊销专项（架构评审批次二）：tokenVersion 令牌版本号——改密/封禁即刻踢下线（含 7 天 refresh 白名单窗口与 2h access 残留），jwt.strategy 升级状态比对顺带修复封禁延迟与角色快照两个旧问题，老格式令牌平滑兼容；新增 4 个集成用例（合计 19） |

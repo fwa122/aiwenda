@@ -14,6 +14,8 @@ COPY . .
 RUN npm run build
 
 # 运行阶段：nginx 托管静态资源
-FROM nginx:alpine
+# 用官方非 root 变体（uid 101，listen 8080，临时目录已指向 /tmp）：
+# nginx 常驻公网入口，以 root 跑 master 是经典提权入口
+FROM nginxinc/nginx-unprivileged:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 8080

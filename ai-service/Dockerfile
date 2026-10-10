@@ -9,9 +9,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    # 非 root 运行：容器被攻破时不持 root；依赖装系统 site-packages（只读），
+    # 解析临时文件走 /tmp（world-writable）
+    && useradd --create-home --uid 1000 appuser
 
-COPY app ./app
+COPY --chown=appuser:appuser app ./app
+USER appuser
 
 EXPOSE 8000
 

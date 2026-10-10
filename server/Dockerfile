@@ -24,16 +24,20 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --legacy-peer-deps
 
 # Prisma 生成产物（query engine + client 代码）
-COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/prisma/schema.prisma ./prisma/schema.prisma
-COPY --from=build /app/prisma/dist-seed/seed.js ./prisma/seed.js
-COPY --from=build /app/prisma/migrations ./prisma/migrations
+COPY --from=build --chown=node:node /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/prisma/schema.prisma ./prisma/schema.prisma
+COPY --from=build --chown=node:node /app/prisma/dist-seed/seed.js ./prisma/seed.js
+COPY --from=build --chown=node:node /app/prisma/migrations ./prisma/migrations
 # 存量迁移脚本（v0.9.25 uploads→MinIO 一次性迁移，docker run 方式执行）
-COPY --from=build /app/scripts ./scripts
+COPY --from=build --chown=node:node /app/scripts ./scripts
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # Windows 构建上下文可能带 CRLF，统一去 \r 防止 entrypoint 执行失败
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# 非 root 运行（node 镜像自带 uid 1000 用户）：容器被攻破时不持 root；
+# 运行时无需写 /app（迁移写 DB、上传走 MinIO），临时文件走 /tmp
+USER node
 
 EXPOSE 3000
 ENTRYPOINT ["docker-entrypoint.sh"]

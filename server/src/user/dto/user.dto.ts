@@ -3,7 +3,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  MinLength,
+  Matches,
 } from 'class-validator';
 
 export class UpdateProfileDto {
@@ -17,8 +17,10 @@ export class ChangePasswordDto {
   @IsNotEmpty({ message: '原密码不能为空' })
   oldPassword: string;
 
-  @IsNotEmpty({ message: '新密码不能为空' })
-  @MinLength(6, { message: '新密码至少 6 位' })
+  // 与注册口令策略（RegisterDto）保持一致，避免改密后绕过复杂度要求
+  @Matches(/^(?=.*[A-Za-z])(?=.*\d).{8,32}$/, {
+    message: '新密码需 8~32 位，且同时包含字母和数字',
+  })
   newPassword: string;
 }
 
@@ -28,7 +30,10 @@ export class CreateUserDto {
   username: string;
 
   @IsNotEmpty({ message: '密码不能为空' })
-  @MinLength(6, { message: '密码至少 6 位' })
+  // 与注册口令策略（RegisterDto）保持一致：管理员建号不得低于自助注册强度
+  @Matches(/^(?=.*[A-Za-z])(?=.*\d).{8,32}$/, {
+    message: '密码需 8~32 位，且同时包含字母和数字',
+  })
   password: string;
 
   @IsOptional() @IsString() nickname?: string;

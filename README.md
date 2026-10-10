@@ -122,6 +122,8 @@ celery -A app.tasks:celery_app worker --pool=solo --loglevel=info
 
 > 开发模式与 Docker 部署是**两套独立的数据卷**，数据不互通，请选定一套使用。
 
+> **Prisma 迁移漂移警告（踩坑记录）**：部分索引（`chunks`/`messages` 的 trigram GIN、`chunks_doc_chunk_uniq` 唯一索引、HNSW 向量索引）由 AI 服务启动时幂等创建（[ai-service/app/db.py](ai-service/app/db.py) 的 `ensure_indexes`），**不在 Prisma 迁移历史内**。因此开发库请只用 `npx prisma migrate deploy`（应用已确认的迁移），**禁止 `npx prisma migrate dev`**——后者按 schema 与迁移历史做 diff，会把这些"计划外"索引视为漂移生成 DROP 迁移（v0.9.26 之前 HNSW 索引曾被误删）。同理，新增迁移请先在干净库验证再提交。
+
 ### 演示账号
 
 | 用户名 | 密码 | 角色 |
@@ -220,6 +222,7 @@ AI问答/
 
 | 版本 | 日期 | 主题 |
 | --- | --- | --- |
+| v0.9.28 | 2026-10-10 | 一致性专项（架构评审批次三）：改密/建号口令统一至注册强度（8~32 位字母+数字）、轻量任务模型渠道感知（FLASH_MODEL 回落默认渠道，不再硬编码千问）、注册并发竞态 500 转 409、嵌入缓存建表移出解析热路径、Redis healthcheck + 应用依赖 service_healthy、迁移漂移踩坑文档化 |
 | v0.9.27 | 2026-10-10 | 会话吊销专项（架构评审批次二）：tokenVersion 令牌版本号——改密/封禁即刻踢下线（含 7 天 refresh 白名单窗口与 2h access 残留），jwt.strategy 升级状态比对顺带修复封禁延迟与角色快照两个旧问题，老格式令牌平滑兼容；新增 4 个集成用例（合计 19） |
 | v0.9.26 | 2026-10-10 | 可靠性专项（架构评审批次一）：Celery prefork 连接池 fork 安全（惰性开池 + 探活自愈）+ 卡死文档对账（worker -B 内嵌 beat，5 分钟周期重投）+ 解析超时护栏（30/35 分钟）+ 切片唯一索引防双跑 + 内部错误透传收口；顺带修复并发 DDL 竞争 |
 | v0.9.25 | 2026-10-09 | 文档存储切换 MinIO 对象存储（S3 兼容）：storage 模块 fail-fast + 自动建桶、worker 拉取 tempfile 解析、存量迁移脚本、桶级备份、e2e/CI 加 minio 测试实例 |

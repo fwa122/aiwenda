@@ -54,7 +54,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       minio:
         condition: service_healthy
     healthcheck:
@@ -104,7 +104,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       minio:
         condition: service_healthy
     restart: unless-stopped
@@ -120,7 +120,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       minio:
         condition: service_healthy
     restart: unless-stopped
@@ -147,6 +147,14 @@ services:
     # requirepass 必填（:? 缺失时 compose 直接报错，fail-fast）：
     # Redis 未授权访问是经典入侵入口，且该实例是 Celery broker
     command: ['redis-server', '--requirepass', '${REDIS_PASSWORD:?REDIS_PASSWORD 未配置}']
+    environment:
+      # 供 healthcheck 内 redis-cli 鉴权使用（$$ 转义为容器内变量，不落宿主进程列表）
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD 未配置}
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 12
     volumes:
       - redis_data:/data
     restart: unless-stopped

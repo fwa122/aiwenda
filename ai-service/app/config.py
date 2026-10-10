@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # LLM
     llm_model: str = 'glm-4-flash'
     llm_temperature: float = 0.3
+    # 轻量任务模型（查询改写/后续建议/会话命名等低 token 场景）：
+    # 空值跟随 llm_model 所在渠道（渠道感知回落），不再硬编码特定厂商的 flash 型号——
+    # 否则默认渠道没配对应 API Key 时这些轻量功能整体不可用
+    flash_model: str = ''
 
     # 基础
     database_url: str = 'postgresql://kb:kb123456@127.0.0.1:5432/kb'

@@ -43,17 +43,27 @@ export class AuthService {
     });
     if (exist) throw new ConflictException('用户名已存在');
 
-    const user = await this.prisma.user.create({
-      data: {
-        id: genId('user'),
-        username: dto.username,
-        passwordHash: await bcrypt.hash(dto.password, 10),
-        nickname: dto.nickname || dto.username,
-        email: dto.email,
-        role: 'viewer',
-        status: 'active',
-      },
-    });
+    let user;
+    try {
+      user = await this.prisma.user.create({
+        data: {
+          id: genId('user'),
+          username: dto.username,
+          passwordHash: await bcrypt.hash(dto.password, 10),
+          nickname: dto.nickname || dto.username,
+          email: dto.email,
+          role: 'viewer',
+          status: 'active',
+        },
+      });
+    } catch (e) {
+      // 并发注册兜底：前置 findUnique 与 create 之间存在竞态（TOCTOU），
+      // 唯一约束冲突（P2002）同样按 409 语义返回，而非 500
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException('用户名已存在');
+      }
+      throw e;
+    }
 
     this.log.record({
       action: '注册账号',

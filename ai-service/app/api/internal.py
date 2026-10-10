@@ -71,8 +71,9 @@ def rewrite_query(question: str, history: list) -> str:
         messages: list[dict] = [{'role': 'system', 'content': REWRITE_SYSTEM_PROMPT}]
         messages.extend({'role': h.role, 'content': h.content} for h in history[-6:])
         messages.append({'role': 'user', 'content': question})
-        # 轻量任务用 flash 档：改写是 100 token 内的小任务，走默认 max 档纯属浪费
-        rewritten = llm.chat_once(messages, model='qwen3.7-flash', temperature=0.1, max_tokens=100)
+        # 轻量任务用 flash 档：改写是 100 token 内的小任务，走默认 max 档纯属浪费。
+        # model 传渠道感知的轻量模型（未配置 flash_model 时为 None → llm 层回落默认渠道）
+        rewritten = llm.chat_once(messages, model=settings.flash_model or None, temperature=0.1, max_tokens=100)
         rewritten = rewritten.strip().strip('"“”').strip()
         return rewritten or question
     except Exception as exc:  # noqa: BLE001
@@ -362,7 +363,7 @@ class SuggestionsRequest(BaseModel):
 
 @router.post('/chat/suggestions')
 def chat_suggestions(body: SuggestionsRequest):
-    """后续问题建议：qwen3.7-flash 低 max_tokens 生成 3 个追问；任何异常返回空数组"""
+    """后续问题建议：轻量模型低 max_tokens 生成 3 个追问；任何异常返回空数组"""
     try:
         question = (body.question or '').strip()[:1000]
         answer = (body.answer or '').strip()[:SUGGESTION_ANSWER_MAX_CHARS]
@@ -370,7 +371,7 @@ def chat_suggestions(body: SuggestionsRequest):
             return {'suggestions': []}
         messages: list[dict] = [{'role': 'system', 'content': SUGGESTION_SYSTEM_PROMPT}]
         messages.append({'role': 'user', 'content': f'用户提问：{question}\n\n助手回答：{answer}'})
-        text = llm.chat_once(messages, model='qwen3.7-flash', temperature=0.8, max_tokens=200)
+        text = llm.chat_once(messages, model=settings.flash_model or None, temperature=0.8, max_tokens=200)
         match = re.search(r'\[[\s\S]*\]', text or '')
         if not match:
             return {'suggestions': []}
@@ -398,7 +399,7 @@ class TitleRequest(BaseModel):
 
 @router.post('/chat/title')
 def chat_title(body: TitleRequest):
-    """会话自动命名：qwen3.7-flash 低 token 生成 16 字内标题；任何异常返回空串"""
+    """会话自动命名：轻量模型低 token 生成 16 字内标题；任何异常返回空串"""
     try:
         question = (body.question or '').strip()[:500]
         answer = (body.answer or '').strip()[:500]
@@ -406,7 +407,7 @@ def chat_title(body: TitleRequest):
             return {'title': ''}
         messages: list[dict] = [{'role': 'system', 'content': TITLE_SYSTEM_PROMPT},
                     {'role': 'user', 'content': f'用户提问：{question}\n\n助手回答：{answer}'}]
-        text = llm.chat_once(messages, model='qwen3.7-flash', temperature=0.3, max_tokens=50)
+        text = llm.chat_once(messages, model=settings.flash_model or None, temperature=0.3, max_tokens=50)
         match = re.search(r'\{[\s\S]*\}', text or '')
         if not match:
             return {'title': ''}

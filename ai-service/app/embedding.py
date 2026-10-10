@@ -141,7 +141,7 @@ def embed_texts_cached(texts: list[str]) -> list[list[float]]:
         return []
     if settings.embedding_provider == 'mock':
         return embed_texts(texts)
-    ensure_embedding_cache()  # worker 不走 api lifespan：任务内幂等建表
+    ensure_embedding_cache()  # 进程内幂等一次：正常路径已在启动时建表，此处是 solo 池/启动失败的惰性兜底
     hashes = [_content_hash(t) for t in texts]
     first_idx: dict[str, int] = {}  # 同批内去重：重复文本只嵌入一次
     for i, h in enumerate(hashes):

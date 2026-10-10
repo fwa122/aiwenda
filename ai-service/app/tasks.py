@@ -4,6 +4,7 @@ import tempfile
 
 from celery import Celery
 from celery.exceptions import SoftTimeLimitExceeded
+from celery.signals import worker_process_init
 from minio import Minio
 
 from .chunker import chunk_blocks
@@ -33,6 +34,19 @@ celery_app.conf.update(
 )
 
 _minio: Minio | None = None
+
+
+@worker_process_init.connect
+def init_worker_process(**_kwargs):
+    """prefork 子进程启动时建嵌入缓存表（DDL 从任务热路径移到启动时，见 db.ensure_embedding_cache）。
+    失败不阻塞 worker：首次任务经 embed_texts_cached 惰性兜底。
+    注意 solo 池不发该信号——由任务内幂等调用兜底。"""
+    from .db import ensure_embedding_cache
+
+    try:
+        ensure_embedding_cache()
+    except Exception as exc:  # noqa: BLE001
+        print(f'[worker_init] 警告：嵌入缓存表初始化失败（任务内惰性兜底）: {exc}')
 
 
 def get_minio() -> Minio:

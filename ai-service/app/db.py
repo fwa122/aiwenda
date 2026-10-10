@@ -1,5 +1,3 @@
-import time
-
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -55,16 +53,23 @@ def ensure_indexes() -> None:
             print(f'[ensure_indexes] 警告：索引创建失败（{sql.splitlines()[0][:60]}...）: {exc}')
 
 
-# 缓存清理节流：ensure_embedding_cache 在每个解析任务都会调用，DELETE 最多 1 小时执行一次
-_cache_cleanup_last = 0.0
+# 缓存表建表幂等标志：进程生命周期内只执行一次 DDL（此前在每次解析任务内调用，
+# 热路径上反复拿 advisory lock + CREATE TABLE IF NOT EXISTS，纯浪费）
+_cache_ensured = False
 CACHE_TTL_DAYS = 30
 
 
 def ensure_embedding_cache() -> None:
-    """嵌入缓存表幂等创建（api 启动与 worker 任务内都会调用）。
+    """嵌入缓存表幂等创建（进程内一次）：API 在 lifespan 启动时调用，worker prefork
+    子进程由 worker_process_init 信号调用；solo 池不发信号，由首次任务经
+    embed_texts_cached 惰性兜底（本函数保持幂等可重入）。
     DDL 按当前维度建列：若 settings.embedding_dimensions 变更，需删表重建并全库重嵌入。
     事务级 advisory lock 串行化 DDL：prefork 多子进程并发首跑时，并发 CREATE TABLE
     IF NOT EXISTS 会撞 pg_type 目录唯一约束（UniqueViolation）导致任务无谓重试。"""
+    global _cache_ensured
+    if _cache_ensured:
+        return
+    _ensure_pool_open()
     with pool.connection() as conn:
         conn.execute('SELECT pg_advisory_xact_lock(860425001)')
         conn.execute(
@@ -77,17 +82,16 @@ def ensure_embedding_cache() -> None:
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )"""
         )
-    # P2 改造：过期缓存定期清理（换 provider/model 后旧 hash 不会再命中，防表无限增长）
-    global _cache_cleanup_last
-    if time.time() - _cache_cleanup_last > 3600:
-        _cache_cleanup_last = time.time()
-        try:
-            execute(
-                f"DELETE FROM embedding_cache "
-                f"WHERE created_at < NOW() - INTERVAL '{CACHE_TTL_DAYS} days'"
-            )
-        except Exception as exc:  # noqa: BLE001
-            print(f'[embedding_cache] cleanup failed (non-fatal): {exc}')
+    _cache_ensured = True
+    # P2 改造：过期缓存清理（换 provider/model 后旧 hash 不会再命中，防表无限增长）。
+    # 随建表移到进程启动时执行一次（30 天 TTL 无需高频清理）
+    try:
+        execute(
+            f"DELETE FROM embedding_cache "
+            f"WHERE created_at < NOW() - INTERVAL '{CACHE_TTL_DAYS} days'"
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f'[embedding_cache] cleanup failed (non-fatal): {exc}')
 
 
 def fetch_all(sql: str, params: tuple | None = None) -> list[dict]:

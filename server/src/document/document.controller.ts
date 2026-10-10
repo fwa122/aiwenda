@@ -16,7 +16,6 @@ import {
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
-import { createReadStream } from 'fs';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/current-user.decorator';
 import { OperationLogService } from '../log/operation-log.service';
@@ -111,7 +110,7 @@ export class DocumentController {
     @Ip() ip: string,
     @Res({ passthrough: true }) res: Response
   ): Promise<StreamableFile> {
-    const { doc, kb, abs, contentType } = await this.service.getFile(docId, user);
+    const { doc, kb, stream, contentType } = await this.service.getFile(docId, user);
     const disposition = mode === 'attachment' ? 'attachment' : 'inline';
     // RFC 5987 编码：兼容中文文件名，且杜绝 header 注入（换行/引号已被编码吞掉）
     res.setHeader(
@@ -119,6 +118,8 @@ export class DocumentController {
       `${disposition}; filename*=UTF-8''${encodeURIComponent(doc.name)}`
     );
     res.setHeader('Content-Type', contentType);
+    // 大小取文档记录：PDF 预览与下载进度条依赖 Content-Length
+    res.setHeader('Content-Length', doc.size.toString());
     if (disposition === 'attachment' || kb.visibility === 'private') {
       this.log.record({
         userId: user?.id,
@@ -128,6 +129,6 @@ export class DocumentController {
         ip,
       });
     }
-    return new StreamableFile(createReadStream(abs));
+    return new StreamableFile(stream);
   }
 }

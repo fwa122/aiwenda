@@ -5,10 +5,8 @@
 #       —— 即「Infra in Docker, Code on Host」混合方案，避开 Windows 文件挂载性能问题
 #
 # 常用命令：
-#   启动（默认只起 PG + Redis）
+#   启动（PG + Redis + MinIO）
 #     docker compose -f docker-compose.infra.yml up -d
-#   启动并包含 MinIO（P2 文件上传阶段才需要）
-#     docker compose -f docker-compose.infra.yml --profile storage up -d
 #   查看状态
 #     docker compose -f docker-compose.infra.yml ps
 #   停止（保留数据）
@@ -73,23 +71,29 @@ services:
 
   # ---------------------------------------------------------------------------
   # MinIO（S3 兼容对象存储）
-  # 作用：存放上传的原始文档
-  # 默认不启动，P2 阶段做文件上传时用 --profile storage 启用
-  # 控制台：http://localhost:9001（minioadmin / minioadmin）
+  # 作用：存放上传的原始文档（server 写入 / worker 拉取解析），上传文档的唯一后端
+  # 注：v0.9.25 起为必启服务（本地存储已移除）；凭据默认仅限本地开发，
+  #     可在根 .env 用 MINIO_ROOT_USER / MINIO_ROOT_PASSWORD 覆盖
+  # 控制台：http://localhost:9001（默认 minioadmin / minioadmin）
   # ---------------------------------------------------------------------------
   minio:
     image: minio/minio
     container_name: kb-minio
-    profiles: ['storage']
     ports:
-      - '9000:9000' # API
-      - '9001:9001' # Web 控制台
+      - '127.0.0.1:9000:9000' # API
+      - '127.0.0.1:9001:9001' # Web 控制台
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     command: server /data --console-address ':9001'
     volumes:
       - miniodata:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     restart: unless-stopped
 
 volumes:

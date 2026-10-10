@@ -22,6 +22,11 @@ process.env.DATABASE_URL = 'postgresql://kbt:kbt@127.0.0.1:6381/kbt';
 process.env.REDIS_URL = 'redis://127.0.0.1:6380/0';
 process.env.JWT_SECRET = 'e2e-test-secret-0123456789abcdef0123456789abcdef';
 process.env.JWT_EXPIRES_IN = '2h';
+// MinIO 测试实例（docker-compose.test.yml，端口 6390；AppModule 启动时自动建桶）
+process.env.MINIO_ENDPOINT = '127.0.0.1:6390';
+process.env.MINIO_ACCESS_KEY = 'kbt';
+process.env.MINIO_SECRET_KEY = 'kbt-minio';
+process.env.MINIO_BUCKET = 'kb-test-chat';
 
 const RUN = Date.now().toString(36);
 const PASSWORD = 'Abcd1234';

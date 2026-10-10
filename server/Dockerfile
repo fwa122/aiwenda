@@ -29,6 +29,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma/schema.prisma ./prisma/schema.prisma
 COPY --from=build /app/prisma/dist-seed/seed.js ./prisma/seed.js
 COPY --from=build /app/prisma/migrations ./prisma/migrations
+# 存量迁移脚本（v0.9.25 uploads→MinIO 一次性迁移，docker run 方式执行）
+COPY --from=build /app/scripts ./scripts
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # Windows 构建上下文可能带 CRLF，统一去 \r 防止 entrypoint 执行失败
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh

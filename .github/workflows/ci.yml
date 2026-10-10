@@ -41,7 +41,7 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: npx prisma generate
-      - name: 启动测试容器（独立 Postgres/Redis）
+      - name: 启动测试容器（独立 Postgres/Redis/MinIO）
         run: docker compose -f docker-compose.test.yml up -d
       - run: npm run test:e2e:cov
 

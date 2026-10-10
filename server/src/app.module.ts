@@ -6,6 +6,7 @@ import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis'
 import type Redis from 'ioredis';
 import { PrismaModule } from './prisma/prisma.module';
 import { REDIS_CLIENT, RedisModule } from './redis/redis.module';
+import { StorageModule } from './storage/storage.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
@@ -23,6 +24,7 @@ import { LogModule } from './log/log.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     RedisModule,
+    StorageModule,
     // 全局限流兜底：单 IP 每分钟 300 次（nginx 反代后按真实客户端 IP 计数，
     // 见 main.ts 的 trust proxy）。高成本接口（问答/上传/登录）在各 controller 单独收紧。
     // P1-3：计数下沉 Redis——server 重启/多实例部署计数不丢，攻击者无法靠打重启清零

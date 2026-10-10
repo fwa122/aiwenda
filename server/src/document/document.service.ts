@@ -6,14 +6,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import type { Readable } from 'stream';
 import { genId } from '../common/id.util';
 import { canReadKb, canWriteKb, SessionUser } from '../common/kb-access';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiServiceClient } from '../integrations/ai-service.client';
-
-const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads');
+import { StorageService } from '../storage/storage.module';
 
 /** 允许上传的文档扩展名（与 ai-service app/parser.py 支持严格对齐） */
 const ALLOWED_DOC_EXTS = ['pdf', 'docx', 'txt', 'md', 'csv'];
@@ -26,6 +24,14 @@ const MIME_BY_EXT: Record<string, string> = {
   csv: 'text/csv; charset=utf-8',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
+
+/** 预览/下载打开的文件上下文：流来自 MinIO，大小取文档记录（写 Content-Length 用） */
+export interface FileWithStream {
+  doc: { id: string; name: string; size: bigint; storageKey: string | null; [k: string]: unknown };
+  kb: { visibility: string; [k: string]: unknown };
+  stream: Readable;
+  contentType: string;
+}
 
 /**
  * 修复 Multer 的文件名乱码：multipart 中的 filename 是 UTF-8 字节，
@@ -44,7 +50,8 @@ export function fixFilenameEncoding(name: string): string {
 export class DocumentService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    private readonly ai: AiServiceClient
+    private readonly ai: AiServiceClient,
+    private readonly storage: StorageService
   ) {}
 
   /**
@@ -60,11 +67,11 @@ export class DocumentService {
   }
 
   /**
-   * 原始文件预览/下载：定位记录 → 权限断言 → 推导绝对路径 → 校验可读。
-   * 路径完全由服务端生成的 storageKey 推导，不接受任何用户可控路径片段；
-   * resolve 后再前缀校验一次，防止存储数据被篡改时的路径穿越（纵深防御）。
+   * 原始文件预览/下载：定位记录 → 权限断言 → 打开对象流。
+   * storageKey 由服务端生成（<kbId>/<doc_xxx>.<ext>），仍做一次特征校验作纵深防御——
+   * 即使存储元数据被篡改，路径片段（../、绝对路径）也会被拒绝。
    */
-  async getFile(docId: string, user: SessionUser) {
+  async getFile(docId: string, user: SessionUser): Promise<FileWithStream> {
     const doc = await this.prisma.document.findUnique({ where: { id: docId } });
     if (!doc) throw new NotFoundException('文档不存在');
     const kb = await this.assertKb(doc.kbId, user);
@@ -72,16 +79,12 @@ export class DocumentService {
     const contentType = MIME_BY_EXT[(doc.type || '').toLowerCase()];
     if (!contentType) throw new BadRequestException('该文档类型不支持预览或下载');
 
-    const abs = path.resolve(UPLOAD_ROOT, doc.storageKey);
-    if (!abs.startsWith(UPLOAD_ROOT + path.sep)) {
+    const key = doc.storageKey || '';
+    if (!key || key.includes('..') || key.startsWith('/')) {
       throw new BadRequestException('非法文件路径');
     }
-    try {
-      await fs.access(abs);
-    } catch {
-      throw new NotFoundException('文件已丢失，请重新上传');
-    }
-    return { doc, kb, abs, contentType };
+    const stream = await this.storage.get(key);
+    return { doc, kb, stream, contentType };
   }
 
   async list(
@@ -111,18 +114,14 @@ export class DocumentService {
   }
 
   /**
-   * 上传文档：保存文件到本地 uploads/<kbId>/，并写入 documents 记录（status=pending）。
-   * 真正的解析 + 切片 + 向量化由 Python AI 服务消费队列完成；
-   * 此处仅持久化元数据，便于联调与后续 worker 接入。
+   * 上传文档：写入 MinIO 桶（key=<kbId>/<safeName>），并建 documents 记录（status=pending）。
+   * 真正的解析 + 切片 + 向量化由 Python AI 服务消费队列完成（worker 拉取同一对象）。
    */
   async upload(kbId: string, files: Express.Multer.File[], user: SessionUser) {
     await this.assertKb(kbId, user, 'write');
     if (!files || files.length === 0) {
       throw new BadRequestException('未收到文件');
     }
-
-    const dir = path.join(UPLOAD_ROOT, kbId);
-    await fs.mkdir(dir, { recursive: true });
 
     const created: any[] = [];
     for (const file of files) {
@@ -144,7 +143,8 @@ export class DocumentService {
         throw new BadRequestException('文件内容与扩展名不符（DOCX 魔数校验未通过）');
       }
       const safeName = `${genId('doc')}.${ext}`;
-      await fs.writeFile(path.join(dir, safeName), file.buffer);
+      const storageKey = `${kbId}/${safeName}`;
+      await this.storage.put(storageKey, file.buffer, MIME_BY_EXT[ext].split(';')[0]);
 
       const doc = await this.prisma.document.create({
         data: {
@@ -153,7 +153,7 @@ export class DocumentService {
           name: originalName,
           type: ext,
           size: BigInt(file.size),
-          storageKey: `${kbId}/${safeName}`,
+          storageKey,
           status: 'pending',
           version: 'v1.0',
           uploader: user.username,
@@ -180,11 +180,9 @@ export class DocumentService {
     const doc = await this.prisma.document.findFirst({ where: { id: docId, kbId } });
     if (!doc) throw new NotFoundException('文档不存在');
 
-    // 删除本地文件（若存在）
+    // 删除 MinIO 对象（失败仅告警，见 StorageService.remove）
     if (doc.storageKey) {
-      await fs
-        .rm(path.join(UPLOAD_ROOT, doc.storageKey), { force: true })
-        .catch(() => {});
+      await this.storage.remove(doc.storageKey);
     }
 
     await this.prisma.document.delete({ where: { id: docId } });

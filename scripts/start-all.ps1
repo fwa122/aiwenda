@@ -7,11 +7,13 @@ function Test-Port($port) {
     return [bool](Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
 }
 
-Write-Host '== 1/4 Infra (Docker: kb-postgres / kb-redis) ==' -ForegroundColor Cyan
+Write-Host '== 1/4 Infra (Docker: kb-postgres / kb-redis / kb-minio) ==' -ForegroundColor Cyan
 $running = docker ps --format '{{.Names}}'
 if ("$running" -notmatch 'kb-postgres') { docker start kb-postgres | Out-Null }
 if ("$running" -notmatch 'kb-redis') { docker start kb-redis | Out-Null }
-Write-Host '   postgres / redis ready'
+if ("$running" -notmatch 'kb-minio') { docker start kb-minio | Out-Null }
+Start-Sleep -Seconds 3
+Write-Host '   postgres / redis / minio ready'
 
 Write-Host '== 2/4 Python AI service (uvicorn :8000 + celery worker) ==' -ForegroundColor Cyan
 if (Test-Port 8000) {

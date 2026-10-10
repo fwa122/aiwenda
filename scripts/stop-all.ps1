@@ -22,4 +22,4 @@ Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
         Write-Host "stopped celery worker (pid $($_.ProcessId))"
     }
 
-Write-Host 'Done. (Docker containers kb-postgres / kb-redis keep running; stop them manually if needed)'
+Write-Host 'Done. (Docker containers kb-postgres / kb-redis / kb-minio keep running; stop them manually if needed)'

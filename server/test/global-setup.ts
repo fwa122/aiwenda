@@ -30,7 +30,7 @@ function waitPort(port: number, timeoutMs = 60_000): Promise<void> {
 export async function setup() {
   // 幂等：容器已在跑则直接复用（编排文件与 server 同目录，本机/CI 路径一致）
   execSync('docker compose -f docker-compose.test.yml up -d', { cwd: SERVER_DIR, stdio: 'inherit' });
-  await Promise.all([waitPort(6381), waitPort(6380)]);
+  await Promise.all([waitPort(6381), waitPort(6380), waitPort(6390)]);
   // 独立测试库跑迁移（绝不触碰 server/.env 指向的库）
   execSync('npx prisma migrate deploy', {
     cwd: SERVER_DIR,

@@ -48,7 +48,12 @@ class Settings(BaseSettings):
     # 基础
     database_url: str = 'postgresql://kb:kb123456@127.0.0.1:5432/kb'
     celery_broker_url: str = 'redis://127.0.0.1:6379/1'
-    upload_root: str = './server/uploads'
+    # MinIO（S3 兼容对象存储）：原始文档存放处（与 server 的 storage 模块同一桶）
+    minio_endpoint: str = '127.0.0.1:9000'
+    minio_access_key: str = ''
+    minio_secret_key: str = ''
+    minio_bucket: str = 'kb-documents'
+    minio_secure: bool = False
     internal_token: str = ''
 
     class Config:

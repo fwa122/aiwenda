@@ -1,4 +1,4 @@
-# 集成测试专用基础设施（独立端口，避开生产 5432/6379）
+# 集成测试专用基础设施（独立端口，避开生产 5432/6379/9000）
 # 由 server 的 vitest.e2e globalSetup 自动拉起，无需手动维护
 # 不固定 container_name：避免 compose project 名变化时同名冲突
 services:
@@ -15,3 +15,13 @@ services:
     image: redis:7-alpine
     ports:
       - '127.0.0.1:6380:6379'
+
+  # MinIO：AppModule 启动时 StorageService 会连上并自动建桶（测试用独立端口 6390）
+  minio-test:
+    image: minio/minio
+    environment:
+      MINIO_ROOT_USER: kbt
+      MINIO_ROOT_PASSWORD: kbt-minio
+    command: server /data
+    ports:
+      - '127.0.0.1:6390:9000'

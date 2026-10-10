@@ -41,13 +41,6 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: npx prisma generate
-      # Docker Hub 对 GH Actions 共享出口 IP 的匿名拉取限流近期持续拒绝（0.3s 即 denied，
-      # 重试无效）：MinIO 官方在 quay.io 同源发布，CI 预拉后打回原 tag，
-      # compose 文件与本地 e2e（pgvector/redis 走 Docker Hub 正常）均不受影响
-      - name: 预拉 MinIO 镜像（quay.io 绕开 Docker Hub 匿名限流）
-        run: |
-          docker pull quay.io/minio/minio:latest
-          docker tag quay.io/minio/minio:latest minio/minio:latest
       - name: 启动测试容器（独立 Postgres/Redis/MinIO）
         run: docker compose -f docker-compose.test.yml up -d
       - run: npm run test:e2e:cov

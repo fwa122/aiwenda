@@ -17,8 +17,11 @@ services:
       - '127.0.0.1:6380:6379'
 
   # MinIO：AppModule 启动时 StorageService 会连上并自动建桶（测试用独立端口 6390）
+  # 镜像说明：MinIO Inc. 已停止发布官方镜像并于 2026-09-11 删除 Docker Hub 上的
+  # minio/minio 仓库（GH Actions 匿名拉取直接 404/denied）；pgsty/minio 为社区维护
+  # fork（基于最后上游版本重建，命令与环境变量与官方完全兼容，含 console）
   minio-test:
-    image: minio/minio
+    image: pgsty/minio:latest
     environment:
       MINIO_ROOT_USER: kbt
       MINIO_ROOT_PASSWORD: kbt-minio

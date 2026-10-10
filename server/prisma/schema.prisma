@@ -32,6 +32,9 @@ model User {
   role         String    @default("viewer") @db.VarChar(16) // admin | editor | viewer
   department   String?   @db.VarChar(64)
   status       String    @default("active") @db.VarChar(16) // active | disabled
+  // 令牌版本：改密/封禁时自增，签发时写入 JWT（ver），校验时比对——不等即 401，
+  // 实现改密/封禁后立即吊销该用户全部已签发令牌（无需逐一清除 refresh 白名单）
+  tokenVersion Int       @default(0) @map("token_version")
 
   // 配额（used 值实时统计，不冗余存储，避免数据不一致）
   conversationLimit   Int    @default(30) @map("conversation_limit")

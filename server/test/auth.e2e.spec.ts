@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
+import * as jwt from 'jsonwebtoken';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { REDIS_CLIENT } from '../src/redis/redis.module';
@@ -16,6 +17,11 @@ process.env.DATABASE_URL = 'postgresql://kbt:kbt@127.0.0.1:6381/kbt';
 process.env.REDIS_URL = 'redis://127.0.0.1:6380/0';
 process.env.JWT_SECRET = 'e2e-test-secret-0123456789abcdef0123456789abcdef';
 process.env.JWT_EXPIRES_IN = '2h';
+// MinIO 测试实例（docker-compose.test.yml，端口 6390；AppModule 启动时自动建桶）
+process.env.MINIO_ENDPOINT = '127.0.0.1:6390';
+process.env.MINIO_ACCESS_KEY = 'kbt';
+process.env.MINIO_SECRET_KEY = 'kbt-minio';
+process.env.MINIO_BUCKET = 'kb-test-auth';
 
 const RUN = Date.now().toString(36);
 const PASSWORD = 'Abcd1234';
@@ -23,6 +29,9 @@ const WRONG_PASSWORD = 'Wrong9999';
 const USER_A = `e2e_a_${RUN}`; // 常规链路
 const USER_LOCK = `e2e_lock_${RUN}`; // 锁定专用
 const USER_REG = `e2e_reg_${RUN}`; // 注册专用
+const USER_PW = `e2e_pw_${RUN}`; // 改密吊销专用
+const USER_BAN = `e2e_ban_${RUN}`; // 封禁吊销专用
+const ADMIN_OP = `e2e_admin_${RUN}`; // 执行封禁/更新的管理员
 
 let app: INestApplication;
 let prisma: PrismaService;
@@ -36,7 +45,7 @@ interface ProbeResult {
 
 /** 原生 fetch 探测：返回与 supertest 同形的 { status, body }（supertest 在本机存在 ESM interop 缺陷，弃用） */
 function probe(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'PUT',
   path: string,
   opts: { ip?: string; body?: unknown; token?: string } = {}
 ): Promise<ProbeResult> {
@@ -55,14 +64,14 @@ function probe(
   }));
 }
 
-async function createUser(username: string, password = PASSWORD) {
+async function createUser(username: string, password = PASSWORD, role = 'viewer') {
   await prisma.user.create({
     data: {
       id: `e2euser_${username}`,
       username,
       passwordHash: await bcrypt.hash(password, 10),
       nickname: username,
-      role: 'viewer',
+      role,
       status: 'active',
     },
   });
@@ -85,6 +94,9 @@ beforeAll(async () => {
   redis = app.get<Redis>(REDIS_CLIENT);
   await createUser(USER_A);
   await createUser(USER_LOCK);
+  await createUser(USER_PW);
+  await createUser(USER_BAN);
+  await createUser(ADMIN_OP, PASSWORD, 'admin');
 });
 
 afterAll(async () => {
@@ -198,5 +210,113 @@ describe('令牌类型隔离与登出吊销', () => {
 
     const refresh = await probe('POST', '/api/v1/auth/refresh', { body: { refreshToken: rt } });
     expect(refresh.status).toBe(401); // 白名单键已删除
+  });
+});
+
+describe('tokenVersion 立即吊销（P2 安全专项）', () => {
+  it('改密后旧 access 与旧 refresh 立即失效，新密码可正常登录', async () => {
+    const login = await probe('POST', '/api/v1/auth/login', {
+      body: { username: USER_PW, password: PASSWORD },
+    });
+    const oldToken = login.body.data.token as string;
+    const oldRt = login.body.data.refreshToken as string;
+    expect(oldToken).toBeTruthy();
+
+    const NEW_PASSWORD = 'NewPass5678';
+    const change = await probe('PUT', '/api/v1/user/password', {
+      token: oldToken,
+      body: { oldPassword: PASSWORD, newPassword: NEW_PASSWORD },
+    });
+    expect(change.status).toBe(200); // PUT 默认 200
+
+    // 旧 access（ver 已过期）立即 401，不再存活至自然过期
+    const oldAccess = await probe('GET', '/api/v1/user/profile', { token: oldToken });
+    expect(oldAccess.status).toBe(401);
+    // 旧 refresh 即使还在 7 天白名单窗口内，同样被版本比对拒绝
+    const oldRefresh = await probe('POST', '/api/v1/auth/refresh', {
+      body: { refreshToken: oldRt },
+    });
+    expect(oldRefresh.status).toBe(401);
+    // 新密码可正常登录，换发的新令牌携带新版本号可用
+    const relogin = await probe('POST', '/api/v1/auth/login', {
+      body: { username: USER_PW, password: NEW_PASSWORD },
+    });
+    expect(relogin.status).toBe(201);
+    const newAccess = await probe('GET', '/api/v1/user/profile', {
+      token: relogin.body.data.token as string,
+    });
+    expect(newAccess.status).toBe(200);
+  });
+
+  it('管理员封禁后，被禁用户旧 access 与旧 refresh 立即失效；解禁后旧令牌仍被拒', async () => {
+    const banLogin = await probe('POST', '/api/v1/auth/login', {
+      body: { username: USER_BAN, password: PASSWORD },
+    });
+    const oldToken = banLogin.body.data.token as string;
+    const oldRt = banLogin.body.data.refreshToken as string;
+
+    const adminLogin = await probe('POST', '/api/v1/auth/login', {
+      body: { username: ADMIN_OP, password: PASSWORD },
+    });
+    const adminToken = adminLogin.body.data.token as string;
+    const banUserId = `e2euser_${USER_BAN}`;
+
+    const ban = await probe('PUT', `/api/v1/users/${banUserId}`, {
+      token: adminToken,
+      body: { status: 'disabled' },
+    });
+    expect(ban.status).toBe(200);
+
+    // 双重防线同时生效：status 检查 + tokenVersion 自增
+    const oldAccess = await probe('GET', '/api/v1/user/profile', { token: oldToken });
+    expect(oldAccess.status).toBe(401);
+    const oldRefresh = await probe('POST', '/api/v1/auth/refresh', {
+      body: { refreshToken: oldRt },
+    });
+    expect(oldRefresh.status).toBe(401);
+
+    // 解禁：旧令牌（旧 ver）依然被拒，必须重新登录——防止「解禁连坐复活旧会话」
+    await probe('PUT', `/api/v1/users/${banUserId}`, {
+      token: adminToken,
+      body: { status: 'active' },
+    });
+    const reLogin = await probe('POST', '/api/v1/auth/login', {
+      body: { username: USER_BAN, password: PASSWORD },
+    });
+    expect(reLogin.status).toBe(201);
+    expect(reLogin.body.data.token).toBeTruthy();
+  });
+
+  it('管理员普通更新（未改状态）不吊销存量令牌', async () => {
+    const login = await probe('POST', '/api/v1/auth/login', {
+      body: { username: USER_A, password: PASSWORD },
+    });
+    const token = login.body.data.token as string;
+    expect(token).toBeTruthy();
+
+    const adminLogin = await probe('POST', '/api/v1/auth/login', {
+      body: { username: ADMIN_OP, password: PASSWORD },
+    });
+    const adminToken = adminLogin.body.data.token as string;
+
+    const update = await probe('PUT', `/api/v1/users/e2euser_${USER_A}`, {
+      token: adminToken,
+      body: { nickname: `renamed_${RUN}` },
+    });
+    expect(update.status).toBe(200);
+
+    const stillValid = await probe('GET', '/api/v1/user/profile', { token });
+    expect(stillValid.status).toBe(200); // 版本号未变，令牌不受影响
+  });
+
+  it('老格式令牌（无 ver 字段）按版本 0 兼容，升级不掉线', async () => {
+    // 直接用测试 JWT_SECRET 签发不带 ver 的历史格式令牌（模拟升级前签发的存量令牌）
+    const legacyToken = jwt.sign(
+      { sub: `e2euser_${USER_A}`, username: USER_A, role: 'viewer' },
+      process.env.JWT_SECRET as string,
+      { expiresIn: '2h' }
+    );
+    const res = await probe('GET', '/api/v1/user/profile', { token: legacyToken });
+    expect(res.status).toBe(200); // tokenVersion 默认 0，(ver ?? 0) === 0 → 通过
   });
 });

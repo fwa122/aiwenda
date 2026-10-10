@@ -145,9 +145,10 @@ export class AuthService {
       sub: user.id,
       username: user.username,
       role: user.role,
+      ver: user.tokenVersion,
     };
     const token = await this.jwt.signAsync(payload);
-    const refreshToken = await this.issueRefreshToken(user.id);
+    const refreshToken = await this.issueRefreshToken(user.id, user.tokenVersion);
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
@@ -160,10 +161,10 @@ export class AuthService {
    * 白名单存 Redis（login:rt:{jti} → userId）：轮换即删旧发新，支持登出吊销；
    * Redis 故障时刷新 fail-closed（重新登录即可，安全优先），登录不受影响。
    */
-  private async issueRefreshToken(userId: string): Promise<string> {
+  private async issueRefreshToken(userId: string, tokenVersion: number): Promise<string> {
     const jti = genId('rt');
     const refreshToken = await this.jwt.signAsync(
-      { sub: userId, type: 'refresh', jti },
+      { sub: userId, type: 'refresh', jti, ver: tokenVersion },
       { expiresIn: '7d' }
     );
     // 白名单写入失败不阻塞登录：该令牌刷新时会被 Redis 校验拒绝（fail-closed）
@@ -200,12 +201,17 @@ export class AuthService {
     if (!user || user.status !== 'active') {
       throw new UnauthorizedException('账号不存在或已停用');
     }
+    // 改密/封禁会自增 tokenVersion：旧 refresh 即使还在白名单窗口内也一并拒绝
+    if ((payload.ver ?? 0) !== user.tokenVersion) {
+      throw new UnauthorizedException('刷新令牌已失效，请重新登录');
+    }
     const token = await this.jwt.signAsync({
       sub: user.id,
       username: user.username,
       role: user.role,
+      ver: user.tokenVersion,
     });
-    const newRefreshToken = await this.issueRefreshToken(user.id);
+    const newRefreshToken = await this.issueRefreshToken(user.id, user.tokenVersion);
     return { token, refreshToken: newRefreshToken, user: this.toProfile(user) };
   }
 

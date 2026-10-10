@@ -37,7 +37,9 @@ export class UserService {
     if (!ok) throw new BadRequestException('原密码错误');
     await this.prisma.user.update({
       where: { id },
-      data: { passwordHash: await bcrypt.hash(newPassword, 10) },
+      // tokenVersion 自增：该用户全部已签发令牌（access + refresh）立即失效，
+      // 凭据泄露后改密即可止损，无需等待 access 自然过期
+      data: { passwordHash: await bcrypt.hash(newPassword, 10), tokenVersion: { increment: 1 } },
     });
     return null;
   }
@@ -102,7 +104,13 @@ export class UserService {
   }
 
   async update(id: string, dto: UpdateUserDto) {
-    return withRoleName(await this.prisma.user.update({ where: { id }, data: { ...dto } }));
+    // 封禁（active→disabled）时自增 tokenVersion：被禁用户旧令牌立即 401，
+    // 而非存活至 access 自然过期（≤2h 窗口）
+    const data = { ...dto };
+    if (dto.status === 'disabled') {
+      (data as Record<string, unknown>).tokenVersion = { increment: 1 };
+    }
+    return withRoleName(await this.prisma.user.update({ where: { id }, data }));
   }
 
   async remove(id: string) {

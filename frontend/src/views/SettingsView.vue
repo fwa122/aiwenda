@@ -94,6 +94,58 @@
               </el-select>
             </el-form-item>
 
+            <!-- 嵌入渠道与全库重嵌入（admin）：换 .env 渠道后全库向量重建 -->
+            <template v-if="isAdmin">
+              <el-divider content-position="left">嵌入渠道与全库重嵌入</el-divider>
+              <el-form-item label="当前渠道">
+                <div class="readonly-model">
+                  <el-tag v-if="emb.config" type="info" effect="light">{{ embChannelLabel(emb.config) }}</el-tag>
+                  <el-tag v-else type="info" effect="light">未连接 AI 服务</el-tag>
+                  <span class="form-hint">由服务端（ai-service/.env）配置，重启后生效</span>
+                </div>
+              </el-form-item>
+              <el-form-item label="向量签名">
+                <div class="readonly-model">
+                  <el-tag v-if="emb.signature" :type="emb.needsReembed ? 'warning' : 'success'" effect="light">
+                    {{ embChannelLabel(emb.signature) }}
+                  </el-tag>
+                  <el-tag v-else type="danger" effect="light">未知（建议重建一次）</el-tag>
+                  <el-tag v-if="emb.needsReembed && emb.phase === 'idle'" type="warning" effect="light">
+                    渠道已变更，需全库重建
+                  </el-tag>
+                </div>
+              </el-form-item>
+              <el-form-item v-if="emb.phase && emb.phase !== 'idle'" label="重建进度">
+                <div class="reembed-progress">
+                  <el-progress
+                    :percentage="embProgressPct"
+                    :status="emb.phase === 'partial_failed' ? 'exception' : emb.phase === 'finalizing' ? 'success' : undefined"
+                  />
+                  <div class="form-hint">
+                    <template v-if="emb.phase === 'running'">
+                      文档 {{ emb.progress.doneDocs }}/{{ emb.progress.totalDocs }} · 切片 {{ emb.progress.doneChunks }}/{{ emb.progress.totalChunks }}（问答与检索暂停中）
+                    </template>
+                    <template v-else-if="emb.phase === 'finalizing'">正在收尾（重建向量索引）…</template>
+                    <template v-else-if="emb.phase === 'partial_failed'">
+                      部分文档失败（{{ emb.progress.failedDocs }} 个）{{ emb.progress.errorMsg ? '：' + emb.progress.errorMsg : '' }}，可重新点击「开始重嵌入」仅重试失败文档
+                    </template>
+                  </div>
+                </div>
+              </el-form-item>
+              <el-form-item label=" ">
+                <el-button
+                  type="warning"
+                  plain
+                  :loading="embStarting"
+                  :disabled="emb.phase === 'running' || emb.phase === 'finalizing' || !emb.loaded"
+                  @click="startReembed"
+                >
+                  开始全库重嵌入
+                </el-button>
+                <span class="form-hint">更换嵌入渠道（.env）后必须重建，否则新旧向量混检导致检索失效</span>
+              </el-form-item>
+            </template>
+
             <el-divider content-position="left">存储与解析</el-divider>
             <el-form-item label="向量库">
               <el-select v-model="settings.storage.vectorStore" style="width: 320px">
@@ -368,13 +420,15 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getRuntimeModel } from '@/api/chat'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore, useKnowledgeStore } from '@/store'
 import {
   getSystemSettings,
   updateSystemSettings,
+  getEmbeddingState,
+  triggerReembed,
   changePassword,
   getApiKeys,
   createApiKey,
@@ -463,6 +517,89 @@ async function saveSettings() {
   } finally {
     saving.value = false
   }
+}
+
+/* ---------------- 嵌入渠道与全库重嵌入（admin） ---------------- */
+const isAdmin = computed(() => userStore.profile?.role === 'admin')
+const emb = reactive({
+  loaded: false,
+  config: null,
+  signature: null,
+  needsReembed: false,
+  phase: 'idle',
+  progress: null,
+  preview: { docCount: 0, chunkCount: 0, estimatedTokens: 0 }
+})
+const embStarting = ref(false)
+let embTimer = null
+
+const PROVIDER_LABELS = { zhipu: '智谱', qianwen: '通义千问', mock: '模拟' }
+
+function embChannelLabel(ch) {
+  if (!ch) return ''
+  const name = PROVIDER_LABELS[ch.provider] || ch.provider
+  return `${name} · ${ch.model} · ${ch.dimensions} 维`
+}
+
+const embProgressPct = computed(() => {
+  const p = emb.progress
+  if (!p) return 0
+  if (emb.phase === 'finalizing') return 100
+  const docs = p.totalDocs > 0 ? Math.round(((p.doneDocs + p.failedDocs) / p.totalDocs) * 100) : 0
+  return Math.min(100, docs)
+})
+
+async function loadEmbeddingState() {
+  try {
+    const data = await getEmbeddingState()
+    Object.assign(emb, data, { loaded: true })
+  } catch {
+    emb.loaded = false
+  }
+  scheduleEmbPoll()
+}
+
+/** 运行中每 3s 轮询进度，空闲即停 */
+function scheduleEmbPoll() {
+  if (embTimer) clearTimeout(embTimer)
+  embTimer = null
+  if (emb.loaded && emb.phase && emb.phase !== 'idle') {
+    embTimer = setTimeout(loadEmbeddingState, 3000)
+  }
+}
+
+async function startReembed() {
+  const p = emb.preview || {}
+  const dimChanged = emb.signature && emb.config && emb.signature.dimensions !== emb.config.dimensions
+  const tokens = p.estimatedTokens || 0
+  // 成本预估：中文 ≈ 2 字符/token；按 0.5 元/百万 tokens 示例折算，实际以渠道定价为准
+  const cost = ((tokens / 1e6) * 0.5).toFixed(2)
+  const lines = [
+    `将重嵌入 ${p.docCount ?? '-'} 个文档 / ${p.chunkCount ?? '-'} 个切片，预估约 ${tokens.toLocaleString()} tokens`,
+    `成本参考：按 0.5 元 / 百万 tokens 约合 ${cost} 元（实际以渠道定价为准）`,
+    '重嵌入期间问答与检索将暂停，完成后自动恢复'
+  ]
+  if (dimChanged) {
+    lines.push('检测到向量维度变更：旧向量将被清空且不可逆，请务必备份确认')
+  }
+  try {
+    await ElMessageBox.confirm(lines.join('<br/>'), '全库重嵌入确认', {
+      type: 'warning',
+      confirmButtonText: '开始重建',
+      cancelButtonText: '取消',
+      dangerouslyUseHTMLString: true
+    })
+  } catch {
+    return
+  }
+  embStarting.value = true
+  try {
+    await triggerReembed()
+    ElMessage.success('全库重嵌入已启动')
+  } finally {
+    embStarting.value = false
+  }
+  loadEmbeddingState()
 }
 
 /* ---------------- 个人资料与密码 ---------------- */
@@ -663,10 +800,24 @@ onMounted(async () => {
     loadLogs()
   ])
   if (!userStore.profile) await userStore.fetchProfile()
+  // admin 专属：嵌入渠道状态（依赖 profile.role 判定，故在 fetchProfile 之后）
+  if (isAdmin.value) await loadEmbeddingState()
+})
+
+onUnmounted(() => {
+  if (embTimer) clearTimeout(embTimer)
 })
 </script>
 
 <style scoped>
+.reembed-progress {
+  width: 420px;
+}
+
+.reembed-progress .el-progress {
+  margin-bottom: 4px;
+}
+
 .page-head {
   margin-bottom: 18px;
 }

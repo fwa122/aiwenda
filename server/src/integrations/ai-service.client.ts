@@ -113,6 +113,45 @@ export class AiServiceClient {
     }
   }
 
+  /**
+   * 嵌入渠道签名 / 全库重嵌入状态（admin 设置页）。
+   * 含签名 vs 当前配置的变更检测、运行进度与成本预估（切片数/token 粗估）。
+   */
+  async embeddingState(): Promise<{
+    signature: { provider: string; model: string; dimensions: number } | null;
+    config: { provider: string; model: string; dimensions: number };
+    needsReembed: boolean;
+    phase: string;
+    progress: any | null;
+    preview: { docCount: number; chunkCount: number; estimatedTokens: number };
+  }> {
+    const res = await fetch(`${this.baseUrl}/internal/embedding/state`, {
+      headers: this.authHeaders(),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) throw new Error(`AI 服务嵌入状态读取失败（HTTP ${res.status}）`);
+    return res.json();
+  }
+
+  /** 触发全库重嵌入（维度变更时含清空向量/改列宽 DDL，可能耗时数秒） */
+  async triggerReembed(): Promise<{ ok: boolean; totalDocs: number; totalChunks: number; dimChanged: boolean }> {
+    const res = await fetch(`${this.baseUrl}/internal/embedding/reembed`, {
+      method: 'POST',
+      headers: this.authHeaders(),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        detail = (await res.json())?.detail || detail;
+      } catch {
+        /* 保留状态码 */
+      }
+      throw new Error(detail);
+    }
+    return res.json();
+  }
+
   /** 检索（供 retrieval-test 转发） */
   async search(payload: {
     kbIds: string[];

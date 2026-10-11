@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/current-user.decorator';
 import { OperationLogService } from '../log/operation-log.service';
 import { AiServiceClient } from '../integrations/ai-service.client';
+import { EmbeddingStateService } from '../settings/embedding-state.service';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { CreateKbDto, UpdateKbDto } from './dto/knowledge-base.dto';
 
@@ -24,7 +25,8 @@ export class KnowledgeBaseController {
   constructor(
     private readonly service: KnowledgeBaseService,
     private readonly log: OperationLogService,
-    private readonly ai: AiServiceClient
+    private readonly ai: AiServiceClient,
+    private readonly embeddingState: EmbeddingStateService
   ) {}
 
   @Get()
@@ -82,6 +84,8 @@ export class KnowledgeBaseController {
    */
   @Post('retrieval-test')
   async retrievalTest(@Body() body: any, @CurrentUser() user: any) {
+    // 重嵌入禁答守卫：与问答同一口径，防止新旧渠道向量混检误导调参判断
+    await this.embeddingState.assertChatAvailable();
     const { kbId, query, topK = 5, threshold = 0.28, hybrid = false, rerank = false } = body || {};
     // 防越权：指定的知识库必须当前用户可见
     if (kbId) await this.service.detail(kbId, user);

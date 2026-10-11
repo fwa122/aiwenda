@@ -24,14 +24,16 @@ def _ensure_pool_open() -> None:
     if pool.closed:
         pool.open(wait=False)
 
+# 向量余弦 HNSW 索引（启动建索引与全库重嵌入收尾共用，保持参数一致）
+HNSW_INDEX_SQL = """CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw_idx ON chunks
+   USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)"""
+
 # 索引与扩展统一在此幂等创建（Prisma 迁移不管理向量/trigram 索引，
 # 此前 HNSW 索引曾被自动迁移误删，故由检索层所有方在启动时自建）
 _INDEX_SQL = [
     # 中文词法召回依赖（trusted extension，库 owner 可装）
     'CREATE EXTENSION IF NOT EXISTS pg_trgm',
-    # 向量余弦 HNSW 索引
-    """CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw_idx ON chunks
-       USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)""",
+    HNSW_INDEX_SQL,
     # 词法召回 GIN 索引：支持 content %> query（word_similarity）快速过滤
     """CREATE INDEX IF NOT EXISTS chunks_content_trgm_idx ON chunks
        USING gin (content gin_trgm_ops)""",
@@ -59,6 +61,18 @@ _cache_ensured = False
 CACHE_TTL_DAYS = 30
 
 
+def _embedding_cache_ddl() -> str:
+    """嵌入缓存建表 DDL（按当前维度建列；换维度需 drop 后按新维度重建）"""
+    return f"""CREATE TABLE IF NOT EXISTS embedding_cache (
+        hash TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dim INT NOT NULL,
+        embedding vector({settings.embedding_dimensions}) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )"""
+
+
 def ensure_embedding_cache() -> None:
     """嵌入缓存表幂等创建（进程内一次）：API 在 lifespan 启动时调用，worker prefork
     子进程由 worker_process_init 信号调用；solo 池不发信号，由首次任务经
@@ -72,16 +86,7 @@ def ensure_embedding_cache() -> None:
     _ensure_pool_open()
     with pool.connection() as conn:
         conn.execute('SELECT pg_advisory_xact_lock(860425001)')
-        conn.execute(
-            f"""CREATE TABLE IF NOT EXISTS embedding_cache (
-                hash TEXT PRIMARY KEY,
-                provider TEXT NOT NULL,
-                model TEXT NOT NULL,
-                dim INT NOT NULL,
-                embedding vector({settings.embedding_dimensions}) NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )"""
-        )
+        conn.execute(_embedding_cache_ddl())
     _cache_ensured = True
     # P2 改造：过期缓存清理（换 provider/model 后旧 hash 不会再命中，防表无限增长）。
     # 随建表移到进程启动时执行一次（30 天 TTL 无需高频清理）
@@ -118,3 +123,48 @@ def execute(sql: str, params: tuple | None = None) -> int:
 def vec_literal(vector: list[float]) -> str:
     """向量 → pgvector 字面量 '[0.1,0.2,...]'，SQL 中以 %s::vector 使用"""
     return '[' + ','.join(f'{x:.6f}' for x in vector) + ']'
+
+
+# ============================================================================
+# 全库重嵌入状态（单行表 id=1，ai-service 自建自管，Prisma 迁移不感知）
+# - 签名（provider/model/dims）：库内存量向量由哪个渠道生成；server 侧只读 phase 列做禁答判定
+# - 首建播种当前配置签名：本功能随 v0.9.31 上线，上线时 .env 尚未换渠道，
+#   存量向量确由当前配置生成（换渠道发生在部署之后）
+# ============================================================================
+_EMBEDDING_STATE_DDL = """CREATE TABLE IF NOT EXISTS embedding_state (
+    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    provider TEXT,
+    model TEXT,
+    dims INT,
+    phase TEXT NOT NULL DEFAULT 'idle',
+    total_docs INT NOT NULL DEFAULT 0,
+    done_docs INT NOT NULL DEFAULT 0,
+    failed_docs INT NOT NULL DEFAULT 0,
+    done_chunks BIGINT NOT NULL DEFAULT 0,
+    total_chunks BIGINT NOT NULL DEFAULT 0,
+    dim_changed BOOLEAN NOT NULL DEFAULT FALSE,
+    pending_doc_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    error_msg TEXT,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)"""
+
+_state_ensured = False
+
+
+def ensure_embedding_state() -> None:
+    """重嵌入状态表幂等创建（进程内一次）+ 首建播种当前渠道签名。"""
+    global _state_ensured
+    if _state_ensured:
+        return
+    _ensure_pool_open()
+    with pool.connection() as conn:
+        conn.execute('SELECT pg_advisory_xact_lock(860425002)')
+        conn.execute(_EMBEDDING_STATE_DDL)
+        conn.execute(
+            """INSERT INTO embedding_state (id, provider, model, dims)
+               VALUES (1, %s, %s, %s) ON CONFLICT (id) DO NOTHING""",
+            (settings.embedding_provider, settings.embedding_model, settings.embedding_dimensions),
+        )
+    _state_ensured = True

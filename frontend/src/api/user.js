@@ -189,6 +189,27 @@ export function updateSystemSettings(payload) {
   return request({ url: '/v1/settings', method: 'put', data: payload })
 }
 
+/** 嵌入渠道签名与全库重嵌入状态（admin）：变更检测 + 进度 + 成本预估 */
+export function getEmbeddingState() {
+  if (USE_MOCK) {
+    return mockOk({
+      signature: { provider: 'zhipu', model: 'embedding-3', dimensions: 1024 },
+      config: { provider: 'zhipu', model: 'embedding-3', dimensions: 1024 },
+      needsReembed: false,
+      phase: 'idle',
+      progress: null,
+      preview: { docCount: 0, chunkCount: 0, estimatedTokens: 0 }
+    }, 200)
+  }
+  return request({ url: '/v1/settings/embedding', method: 'get' })
+}
+
+/** 触发全库重嵌入（admin，需先在确认框核对成本与不可逆风险） */
+export function triggerReembed() {
+  if (USE_MOCK) return mockOk({ ok: true, totalDocs: 0, totalChunks: 0, dimChanged: false }, 400)
+  return request({ url: '/v1/settings/embedding/reembed', method: 'post' })
+}
+
 /** API 密钥列表 */
 export function getApiKeys() {
   if (USE_MOCK) return mockOk(clone(mockApiKeys), 200)

@@ -1,15 +1,16 @@
 """Celery 任务：文档解析 → 切片 → Embedding → 写 chunks"""
+import json
 import os
 import tempfile
 
 from celery import Celery
-from celery.exceptions import SoftTimeLimitExceeded
+from celery.exceptions import MaxRetriesExceededError, Retry, SoftTimeLimitExceeded
 from celery.signals import worker_process_init
 from minio import Minio
 
 from .chunker import chunk_blocks
 from .config import settings
-from .db import execute, fetch_all, fetch_one, pool, vec_literal
+from .db import HNSW_INDEX_SQL, execute, fetch_all, fetch_one, pool, vec_literal
 from .embedding import embed_texts_cached
 from .ids import gen_id
 from .parser import parse_file
@@ -28,6 +29,10 @@ celery_app.conf.update(
     beat_schedule={
         'reconcile-stuck-documents': {
             'task': 'app.tasks.reconcile_stuck_documents',
+            'schedule': 300.0,  # 5 分钟
+        },
+        'reconcile-stuck-reembed': {
+            'task': 'app.tasks.reconcile_stuck_reembed',
             'schedule': 300.0,  # 5 分钟
         },
     },
@@ -223,3 +228,148 @@ def reconcile_stuck_documents():
         parse_document.delay(row['id'])
     print(f'[reconcile] 重新投递 {len(stale)} 个卡死文档: {[r["id"] for r in stale]}')
     return {'redispatched': len(stale)}
+
+
+# ────────────────────────── 全库重嵌入 ──────────────────────────
+# 场景：更换嵌入渠道（.env 换 provider/model/维度）后，库内旧向量与查询向量处于
+# 不同语义空间，必须全库重算。流程：/internal/embedding/state 检测签名变更 →
+# 前端确认成本 → /internal/embedding/reembed 按文档派发 reembed_document →
+# 全部到账后 finalize（重建 HNSW 索引 + 写回新签名）→ 问答自动恢复。
+# 重嵌入期间 phase != 'idle'，server 与 ai-service 双侧拒绝问答/检索（防新旧向量混检）。
+# 进度记录在 embedding_state（documents.status 留给解析流转，两套状态互不干扰）。
+
+
+def _maybe_finalize_reembed() -> None:
+    """终态检查：全部文档到账后由唯一赢家收尾。原子 UPDATE 抢占 phase，
+    并发双跑到账时只有一个任务能从 running 改成 finalizing，其余直接落空。"""
+    winner = fetch_one(
+        """UPDATE embedding_state SET phase = 'finalizing', updated_at = NOW()
+           WHERE id = 1 AND phase = 'running' AND done_docs + failed_docs >= total_docs
+           RETURNING id"""
+    )
+    if winner:
+        finalize_reembed()
+
+
+def finalize_reembed() -> None:
+    """重嵌入收尾（幂等：任务赢家与对账任务都可调用）：
+    重建 HNSW 索引（触发时已 DROP，IF NOT EXISTS 防重复）→ 写回新签名。
+    有失败文档则停在 partial_failed 等待 admin 重跑（已完成的文档走嵌入缓存，重跑近零成本）。"""
+    state = fetch_one('SELECT failed_docs FROM embedding_state WHERE id = 1')
+    if not state:
+        return
+    try:
+        execute(HNSW_INDEX_SQL)
+    except Exception as exc:  # noqa: BLE001
+        # 索引重建失败不阻塞状态恢复：检索层有顺序扫描兜底，下次启动 ensure_indexes 自愈
+        print(f'[reembed] 警告：HNSW 索引重建失败（启动时将自愈重试）: {exc}')
+    phase = 'idle' if state['failed_docs'] == 0 else 'partial_failed'
+    execute(
+        """UPDATE embedding_state
+           SET provider = %s, model = %s, dims = %s, phase = %s,
+               finished_at = NOW(), updated_at = NOW()
+           WHERE id = 1""",
+        (settings.embedding_provider, settings.embedding_model, settings.embedding_dimensions, phase),
+    )
+    print(f'[reembed] 收尾完成：phase={phase}, failed_docs={state["failed_docs"]}')
+
+
+def _mark_reembed_doc_failed(doc_id: str, message: str) -> None:
+    """单文档重嵌入终态失败（超时/重试耗尽）：计入失败并检查是否全部到账。"""
+    execute(
+        """UPDATE embedding_state SET
+               failed_docs = failed_docs + 1,
+               pending_doc_ids = pending_doc_ids - %s,
+               error_msg = %s,
+               updated_at = NOW()
+           WHERE id = 1""",
+        (doc_id, message),
+    )
+    _maybe_finalize_reembed()
+
+
+@celery_app.task(bind=True, max_retries=3)
+def reembed_document(self, doc_id: str):
+    """重嵌入单文档：读库内切片文本 → 嵌入（内容缓存优先，未变更文本零 API 调用）→
+    原位更新向量。不碰 documents.status（避免与解析/对账流转互相干扰）。"""
+    state = fetch_one('SELECT phase FROM embedding_state WHERE id = 1')
+    if not state or state['phase'] != 'running':
+        # 非 running（迟到重试/对账重投落在收尾后）直接跳过，其进度已被计入
+        return {'ok': False, 'reason': 'reembed not running'}
+
+    chunks = fetch_all('SELECT id, content FROM chunks WHERE doc_id = %s', (doc_id,))
+    try:
+        if chunks:
+            vectors = embed_texts_cached([c['content'] for c in chunks])
+            rows = [(vec_literal(v), c['id']) for c, v in zip(chunks, vectors)]
+            with pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.executemany('UPDATE chunks SET embedding = %s::vector WHERE id = %s', rows)
+        execute(
+            """UPDATE embedding_state SET
+                   done_docs = done_docs + 1,
+                   done_chunks = done_chunks + %s,
+                   pending_doc_ids = pending_doc_ids - %s,
+                   updated_at = NOW()
+               WHERE id = 1""",
+            (len(chunks), doc_id),
+        )
+        _maybe_finalize_reembed()
+        return {'ok': True, 'docId': doc_id, 'chunks': len(chunks)}
+    except SoftTimeLimitExceeded:
+        # 与解析任务同理：超时属确定性失败，重跑大概率仍超时，直接计失败不进重试
+        _mark_reembed_doc_failed(doc_id, '重嵌入超时（超过 30 分钟），已中止')
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # 瞬时错误（限流/网络）：指数退避重试；重试耗尽才计失败
+        try:
+            raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
+        except Retry:
+            raise
+        except MaxRetriesExceededError:
+            _mark_reembed_doc_failed(doc_id, str(exc)[:500])
+            raise
+
+
+# 对账参数：running 无心跳 40 分钟（> 任务时限 35min + 余量）；finalizing 是轻量同步
+# 操作，10 分钟未完成即视为 worker 中途崩溃。单批上限 20 防惊群，与文档对账口径一致。
+_REEMBED_STUCK_AFTER = '40 minutes'
+_REEMBED_FINALIZING_AFTER = '10 minutes'
+_REEMBED_REDISPATCH_BATCH = 20
+
+
+@celery_app.task
+def reconcile_stuck_reembed():
+    """重嵌入对账自愈：worker 崩溃遗留的 running/finalizing 状态恢复。
+    - finalizing 超 10 分钟：幂等重跑收尾（重建索引 + 恢复状态）
+    - running 超 40 分钟无心跳且仍有在途文档：按 pending_doc_ids 重投（上限 20）"""
+    state = fetch_one('SELECT phase, pending_doc_ids FROM embedding_state WHERE id = 1')
+    if not state or state['phase'] == 'idle':
+        return {'action': None}
+
+    if state['phase'] == 'finalizing':
+        stale = fetch_one(
+            'SELECT 1 FROM embedding_state WHERE id = 1 AND updated_at < NOW() - (%s)::interval',
+            (_REEMBED_FINALIZING_AFTER,),
+        )
+        if stale:
+            finalize_reembed()
+            return {'action': 'finalized'}
+        return {'action': None}
+
+    # running：pending 为空说明全部任务在途/已到账（finalize 条件会自然触发），只看心跳
+    pending = state['pending_doc_ids'] or []
+    if not pending:
+        return {'action': None}
+    stale = fetch_one(
+        'SELECT 1 FROM embedding_state WHERE id = 1 AND updated_at < NOW() - (%s)::interval',
+        (_REEMBED_STUCK_AFTER,),
+    )
+    if not stale:
+        return {'action': None}
+    batch = [str(d) for d in pending[:_REEMBED_REDISPATCH_BATCH]]
+    for doc_id in batch:
+        reembed_document.delay(doc_id)
+    execute('UPDATE embedding_state SET updated_at = NOW() WHERE id = 1')
+    print(f'[reembed] 重投 {len(batch)} 个卡死文档: {batch}')
+    return {'action': 'redispatched', 'count': len(batch)}

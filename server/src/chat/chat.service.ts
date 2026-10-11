@@ -13,6 +13,7 @@ import { genId } from '../common/id.util';
 import { canReadKb } from '../common/kb-access';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiServiceClient, AiSseEvent } from '../integrations/ai-service.client';
+import { EmbeddingStateService } from '../settings/embedding-state.service';
 import { ConversationService, SourceView } from '../conversation/conversation.service';
 import { ChatCompletionDto, ChatSuggestionsDto } from './dto/chat.dto';
 import { SseWriter } from './sse.writer';
@@ -85,6 +86,7 @@ export class ChatService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     private readonly ai: AiServiceClient,
+    private readonly embeddingState: EmbeddingStateService,
     private readonly conversationService: ConversationService
   ) {}
 
@@ -158,6 +160,9 @@ export class ChatService {
   async streamAnswer(userId: string, dto: ChatCompletionDto, req: Request, res: Response, sse: SseWriter) {
     const startedAt = Date.now();
     const model = dto.model || 'unknown';
+
+    // 1. 重嵌入禁答守卫：按文档渐进替换向量期间，新旧渠道向量混检产出垃圾引用，直接拒绝
+    await this.embeddingState.assertChatAvailable();
 
     // 1.5 配额校验：月度 token 限额（跨月自动归零）
     const quotaUser = await this.prisma.user.findUnique({

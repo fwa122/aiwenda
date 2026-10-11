@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 
 from .. import llm, parser, retrieval
 from ..config import settings
-from ..tasks import parse_document
+from ..db import _embedding_cache_ddl, ensure_embedding_state, execute, fetch_all, fetch_one, pool
+from ..tasks import parse_document, reembed_document
 
 
 def safe_error_message(exc: Exception) -> str:
@@ -177,6 +178,134 @@ def submit_parse_task(body: ParseTaskRequest):
     return {'ok': True, 'taskId': result.id, 'docId': body.docId}
 
 
+# ────────────────────────── 全库重嵌入 ──────────────────────────
+
+def reembed_active() -> bool:
+    """重嵌入进行中（phase != idle）即拒绝问答/检索：防新旧渠道向量混检。
+    状态表不存在（旧版本库/首启失败）视为空闲，不阻塞主链路。"""
+    try:
+        row = fetch_one('SELECT phase FROM embedding_state WHERE id = 1')
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(row) and row['phase'] != 'idle'
+
+
+def _embedding_state_row() -> dict | None:
+    try:
+        return fetch_one('SELECT * FROM embedding_state WHERE id = 1')
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@router.get('/embedding/state')
+def embedding_state():
+    """重嵌入总览：库内向量签名（存量向量构建渠道）vs 当前生效配置（检测变更）、
+    运行进度与成本预估（按已解析文档现存切片实时统计）。"""
+    ensure_embedding_state()  # 幂等：老库升级后首次访问补建表
+    row = _embedding_state_row()
+    signature = (
+        {'provider': row['provider'], 'model': row['model'], 'dimensions': row['dims']}
+        if row and row['provider']
+        else None
+    )
+    config = {
+        'provider': settings.embedding_provider,
+        'model': settings.embedding_model,
+        'dimensions': settings.embedding_dimensions,
+    }
+    progress = None
+    if row and row['phase'] != 'idle':
+        progress = {
+            'phase': row['phase'],
+            'totalDocs': row['total_docs'],
+            'doneDocs': row['done_docs'],
+            'failedDocs': row['failed_docs'],
+            'doneChunks': row['done_chunks'],
+            'totalChunks': row['total_chunks'],
+            'pending': len(row['pending_doc_ids'] or []),
+            'errorMsg': row['error_msg'],
+            'startedAt': row['started_at'],
+            'finishedAt': row['finished_at'],
+        }
+    stats = fetch_one(
+        """SELECT COUNT(DISTINCT d.id) AS doc_count, COUNT(c.id) AS chunk_count,
+                  COALESCE(SUM(c.char_count), 0) AS total_chars
+           FROM documents d JOIN chunks c ON c.doc_id = d.id
+           WHERE d.status = 'parsed'"""
+    )
+    return {
+        'signature': signature,
+        'config': config,
+        'needsReembed': signature != config,
+        'phase': row['phase'] if row else 'idle',
+        'progress': progress,
+        'preview': {
+            'docCount': stats['doc_count'],
+            'chunkCount': stats['chunk_count'],
+            # 中文 ≈ 2 字符/token 的粗估，供成本确认框展示
+            'estimatedTokens': int(stats['total_chars']) // 2,
+        },
+    }
+
+
+@router.post('/embedding/reembed')
+def trigger_reembed():
+    """触发全库重嵌入（BFF 已做 admin 鉴权 + 前端二次确认成本）。
+    维度变更时先清空旧向量并改列宽（不可逆），drop HNSW 索引待收尾统一重建。"""
+    ensure_embedding_state()
+    row = _embedding_state_row()
+    phase = row['phase'] if row else 'idle'
+    if phase in ('running', 'finalizing'):
+        raise HTTPException(status_code=409, detail='重嵌入已在进行中')
+
+    config = (settings.embedding_provider, settings.embedding_model, settings.embedding_dimensions)
+    signature = (row['provider'], row['model'], row['dims']) if row and row['provider'] else None
+    # partial_failed 重跑放行「无变更」拦截：失败文档重嵌入，已完成文档走缓存近零成本
+    if signature is not None and signature == config and phase != 'partial_failed':
+        raise HTTPException(status_code=400, detail='嵌入渠道未变更，无需重嵌入')
+
+    docs = fetch_all(
+        """SELECT d.id, COUNT(c.id) AS cnt
+           FROM documents d JOIN chunks c ON c.doc_id = d.id
+           WHERE d.status = 'parsed'
+           GROUP BY d.id"""
+    )
+    if not docs:
+        raise HTTPException(status_code=400, detail='没有已解析的文档，无需重嵌入')
+
+    dim_changed = signature is not None and signature[2] != config[2]
+    if dim_changed:
+        # 1) 旧向量与新列宽不兼容，先全部清空（不可逆；完成后检索才恢复可用）
+        execute('UPDATE chunks SET embedding = NULL')
+        # 2) pgvector 无跨维度 cast，置空后 ALTER 才安全
+        execute(f'ALTER TABLE chunks ALTER COLUMN embedding TYPE vector({config[2]})')
+        # 3) 嵌入缓存表按旧维度建列，必须就地重建（worker 进程内 _cache_ensured 已置真，
+        #    不能依赖惰性建表兜底）；advisory lock 与建表同锁防并发 DDL
+        with pool.connection() as conn:
+            conn.execute('SELECT pg_advisory_xact_lock(860425001)')
+            conn.execute('DROP TABLE IF EXISTS embedding_cache')
+            conn.execute(_embedding_cache_ddl())
+    # 4) 摘除 HNSW 索引：批量更新期间维护索引纯浪费，收尾时统一重建
+    execute('DROP INDEX IF EXISTS chunks_embedding_hnsw_idx')
+
+    total_chunks = sum(d['cnt'] for d in docs)
+    doc_ids = [d['id'] for d in docs]
+    execute(
+        """UPDATE embedding_state SET
+               provider = %s, model = %s, dims = %s,
+               phase = 'running', dim_changed = %s,
+               total_docs = %s, done_docs = 0, failed_docs = 0,
+               done_chunks = 0, total_chunks = %s,
+               pending_doc_ids = %s::jsonb, error_msg = NULL,
+               started_at = NOW(), finished_at = NULL, updated_at = NOW()
+           WHERE id = 1""",
+        (*config, dim_changed, len(docs), total_chunks, json.dumps(doc_ids)),
+    )
+    for doc_id in doc_ids:
+        reembed_document.delay(doc_id)
+    return {'ok': True, 'totalDocs': len(docs), 'totalChunks': total_chunks, 'dimChanged': dim_changed}
+
+
 # 附件提取：允许的扩展名与知识库上传一致；单文件上限 5MB、文本截取 6000 字
 ALLOWED_ATTACH_EXTS = {'pdf', 'docx', 'txt', 'md', 'csv'}
 ATTACH_MAX_BYTES = 5 * 1024 * 1024
@@ -222,6 +351,8 @@ def extract(body: ExtractRequest):
 
 @router.post('/search')
 def search(body: SearchRequest):
+    if reembed_active():
+        raise HTTPException(status_code=503, detail='知识库正在全库重嵌入，检索暂不可用，完成后自动恢复')
     start = time.time()
     meta: dict = {}
     results = retrieval.search(
@@ -242,6 +373,10 @@ def chat(body: ChatRequest):
     def gen():
         started = time.time()
         try:
+            if reembed_active():
+                # 兜底禁答（正常路径由 Node 侧拦截）：防重嵌入期间新旧渠道向量混检
+                yield sse('error', {'message': '知识库正在全库重嵌入，问答暂不可用，完成后自动恢复'})
+                return
             # 多轮改写：有历史时先消解指代，再检索（原问题仍用于生成）
             search_query = rewrite_query(body.question, body.history)
             results = retrieval.search(

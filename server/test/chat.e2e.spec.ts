@@ -31,6 +31,10 @@ process.env.MINIO_BUCKET = 'kb-test-chat';
 const RUN = Date.now().toString(36);
 const PASSWORD = 'Abcd1234';
 const USERNAME = `chat_${RUN}`;
+// API 密钥 e2e 专用：管理员（密钥创建者/归属者）+ scope 内外两个知识库
+const ADMIN_NAME = `chat_admin_${RUN}`;
+const KB_IN_SCOPE = `kb_in_${RUN}`;
+const KB_OUT_SCOPE = `kb_out_${RUN}`;
 
 const REF = {
   kbId: `kb_${RUN}`,
@@ -142,12 +146,33 @@ beforeAll(async () => {
       status: 'active',
     },
   });
+  // API 密钥 e2e 基建：管理员 + 授权范围内外两个库（internal 可见性，viewer/admin 均可读）
+  await prisma.user.create({
+    data: {
+      id: `e2euser_${ADMIN_NAME}`,
+      username: ADMIN_NAME,
+      passwordHash: await bcrypt.hash(PASSWORD, 10),
+      nickname: ADMIN_NAME,
+      role: 'admin',
+      status: 'active',
+    },
+  });
+  await prisma.knowledgeBase.createMany({
+    data: [KB_IN_SCOPE, KB_OUT_SCOPE].map((id) => ({
+      id,
+      name: id,
+      retrieverConfig: {},
+      llmConfig: {},
+      visibility: 'internal',
+      userId: `e2euser_${ADMIN_NAME}`,
+    })),
+  });
 });
 
 afterAll(async () => {
-  const userId = `e2euser_${USERNAME}`;
+  const userIds = [`e2euser_${USERNAME}`, `e2euser_${ADMIN_NAME}`];
   const convs = await prisma.conversation
-    .findMany({ where: { userId }, select: { id: true } })
+    .findMany({ where: { userId: { in: userIds } }, select: { id: true } })
     .catch(() => []);
   const convIds = convs.map((c) => c.id);
   const msgs = convIds.length
@@ -157,7 +182,9 @@ afterAll(async () => {
     .deleteMany({ where: { messageId: { in: msgs.map((m) => m.id) } } })
     .catch(() => {});
   await prisma.message.deleteMany({ where: { conversationId: { in: convIds } } }).catch(() => {});
-  await prisma.conversation.deleteMany({ where: { userId } }).catch(() => {});
+  await prisma.conversation.deleteMany({ where: { userId: { in: userIds } } }).catch(() => {});
+  await prisma.apiKey.deleteMany({ where: { userId: { in: userIds } } }).catch(() => {});
+  await prisma.knowledgeBase.deleteMany({ where: { id: { in: [KB_IN_SCOPE, KB_OUT_SCOPE] } } }).catch(() => {});
   await prisma.$executeRaw`DELETE FROM daily_stats WHERE date = CURRENT_DATE`.catch(() => {});
   await prisma.user.deleteMany({ where: { username: { startsWith: 'chat_' } } }).catch(() => {});
   await prisma.$disconnect().catch(() => {});
@@ -166,17 +193,38 @@ afterAll(async () => {
 });
 
 /** 登录拿 token */
-async function login(): Promise<string> {
+async function login(username = USERNAME): Promise<string> {
   const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'x-forwarded-for': `10.9.9.${Math.floor(Math.random() * 200) + 1}`,
     },
-    body: JSON.stringify({ username: USERNAME, password: PASSWORD }),
+    body: JSON.stringify({ username, password: PASSWORD }),
   });
   const body = await res.json();
   return body.data.token;
+}
+
+/** 管理员创建 API 密钥，返回一次性明文 */
+async function createApiKey(opts: { scope?: string[]; quotaPerDay?: number; expiredAt?: string } = {}) {
+  const token = await login(ADMIN_NAME);
+  const res = await fetch(`${baseUrl}/api/v1/api-keys`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-forwarded-for': `10.8.8.${Math.floor(Math.random() * 200) + 1}`,
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      name: 'e2e-key',
+      scope: opts.scope ?? [],
+      quotaPerDay: opts.quotaPerDay ?? 1000,
+      ...(opts.expiredAt ? { expiredAt: opts.expiredAt } : {}),
+    }),
+  });
+  const body = await res.json();
+  return body.data.key as string;
 }
 
 /** SSE 探测：POST completions 并读取完整事件流（读到流结束） */
@@ -339,5 +387,73 @@ describe('POST /api/v1/chat/completions（BFF 编排，mock ai-service）', () =
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.message).toBe('会话不存在');
+  });
+});
+
+describe('API 密钥认证闭环（ApiKeyAuthGuard 双通道）', () => {
+  it('scope 内问答：sk-kb-* 密钥直连 completions，检索范围默认收敛到授权库', async () => {
+    const key = await createApiKey({ scope: [KB_IN_SCOPE] });
+    const { status, events } = await sseProbe(key, { question: 'APIKEY_OK', kbIds: [], model: 'test-model' });
+    expect(status).toBe(200);
+    expect(typesOf(events)).toEqual(['references', 'delta', 'delta', 'done', 'title']);
+
+    // scope 收敛生效：请求 kbIds 为空 → 下游收到授权库全集（而非全库）
+    expect(receivedChats[receivedChats.length - 1].kbIds).toEqual([KB_IN_SCOPE]);
+
+    // 用量计数：usedToday 自增 + lastUsedAt 记录
+    const row = await prisma.apiKey.findFirst({ where: { keyPreview: { startsWith: 'sk-kb-' } }, orderBy: { createdAt: 'asc' } });
+    expect(row?.usedToday).toBeGreaterThanOrEqual(1);
+    expect(row?.lastUsedAt).toBeTruthy();
+  });
+
+  it('指定授权范围外的 kbId → 403，SSE 未开始返回 JSON', async () => {
+    const key = await createApiKey({ scope: [KB_IN_SCOPE] });
+    const { status, events } = await sseProbe(key, {
+      question: 'APIKEY越权',
+      kbIds: [KB_OUT_SCOPE],
+      model: 'test-model',
+    });
+    expect(status).toBe(403);
+    expect(events).toEqual([]);
+    // 上游从未收到该请求（越权调用不产生 LLM 消耗）
+    expect(receivedChats.some((c: any) => c.question === 'APIKEY越权')).toBe(false);
+  });
+
+  it('scope 为空（未授权）的密钥 → 403', async () => {
+    const key = await createApiKey({ scope: [] });
+    const { status } = await sseProbe(key, { question: 'APIKEY空scope', kbIds: [] });
+    expect(status).toBe(403);
+  });
+
+  it('无效密钥 / 过期密钥 → 401', async () => {
+    const bad = await sseProbe('sk-kb-00000000deadbeef', { question: 'APIKEY无效', kbIds: [] });
+    expect(bad.status).toBe(401);
+
+    const expired = await createApiKey({
+      scope: [KB_IN_SCOPE],
+      expiredAt: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    const res = await sseProbe(expired, { question: 'APIKEY过期', kbIds: [] });
+    expect(res.status).toBe(401);
+  });
+
+  it('每日配额：quotaPerDay=1 首发成功、次发 429', async () => {
+    const key = await createApiKey({ scope: [KB_IN_SCOPE], quotaPerDay: 1 });
+    const first = await sseProbe(key, { question: 'APIKEY配额1', kbIds: [], model: 'test-model' });
+    expect(first.status).toBe(200);
+    const second = await sseProbe(key, { question: 'APIKEY配额2', kbIds: [] });
+    expect(second.status).toBe(429);
+    const body = await fetch(`${baseUrl}/api/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '10.6.6.6', authorization: `Bearer ${key}` },
+      body: JSON.stringify({ question: 'APIKEY配额3' }),
+    }).then((r) => r.json());
+    expect(body.message).toContain('今日调用配额已用尽');
+  });
+
+  it('JWT 通道回归：既有登录用户行为不受影响', async () => {
+    const token = await login();
+    const { status } = await sseProbe(token, { question: 'JWT回归', kbIds: [], model: 'test-model' });
+    expect(status).toBe(200);
   });
 });

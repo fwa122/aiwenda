@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -157,7 +158,15 @@ export class ChatService {
   }
 
   /** SSE 问答主流程 */
-  async streamAnswer(userId: string, dto: ChatCompletionDto, req: Request, res: Response, sse: SseWriter) {
+  async streamAnswer(
+    userId: string,
+    dto: ChatCompletionDto,
+    req: Request,
+    res: Response,
+    sse: SseWriter,
+    /** API 密钥调用的授权知识库集合；JWT 登录为 null（不收敛） */
+    apiKeyScope: string[] | null = null,
+  ) {
     const startedAt = Date.now();
     const model = dto.model || 'unknown';
 
@@ -194,7 +203,16 @@ export class ChatService {
         model: dto.model,
       });
     }
-    const kbIds = await this.filterVisibleKbs(dto.kbIds || ((conversation.kbIds as string[]) || []), userId);
+    let kbIds = await this.filterVisibleKbs(dto.kbIds || ((conversation.kbIds as string[]) || []), userId);
+    // API 密钥调用：检索范围收敛到密钥 scope 内——
+    // 请求未指定 kbIds 时默认授权库全集；指定了则求交集，交空即 403（防止越权检索未授权库）
+    if (apiKeyScope) {
+      const scopeSet = new Set(apiKeyScope);
+      const requested = kbIds.length ? kbIds : apiKeyScope;
+      const narrowed = requested.filter((id) => scopeSet.has(id));
+      if (!narrowed.length) throw new ForbiddenException('请求的知识库不在密钥授权范围内');
+      kbIds = narrowed;
+    }
     const usedModel = dto.model || conversation.model || model;
     // 附件：取回已提取文本（用后即删），随请求传给 AI 服务作为本次上下文
     const attachments = this.takeAttachments(dto.attachmentIds);

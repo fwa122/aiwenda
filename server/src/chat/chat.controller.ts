@@ -9,14 +9,15 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyAuthGuard, RequestUser } from '../auth/guards/api-key-auth.guard';
 import { CurrentUser } from '../common/current-user.decorator';
 import { ChatService, QUICK_PROMPTS, SUGGESTIONS } from './chat.service';
 import { ChatCompletionDto, ChatSuggestionsDto, CreateAttachmentsDto } from './dto/chat.dto';
 import { SseWriter } from './sse.writer';
 
 @Controller('chat')
-@UseGuards(JwtAuthGuard)
+// 复合认证：JWT（Web 前端，行为不变）+ API 密钥 sk-kb-*（开放问答接口）
+@UseGuards(ApiKeyAuthGuard)
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}
 
@@ -41,14 +42,14 @@ export class ChatController {
   @Post('completions')
   @Throttle({ default: { limit: 15, ttl: 60_000 } })
   async completions(
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: RequestUser,
     @Req() req: Request,
     @Res() res: Response,
     @Body() dto: ChatCompletionDto
   ) {
     const sse = new SseWriter(res);
     try {
-      await this.chatService.streamAnswer(userId, dto, req, res, sse);
+      await this.chatService.streamAnswer(user.id, dto, req, res, sse, user.apiKeyScope ?? null);
     } catch (e: any) {
       // streamAnswer 内部抛出（如会话不存在/参数错误）：按 HTTP 语义返回 JSON。
       // 注意：此处绝不能再调 sse.close()（会 end 响应导致 ERR_HTTP_HEADERS_SENT）

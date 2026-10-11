@@ -252,7 +252,8 @@ model ApiKey {
   id         String @id // key_xxx
   userId     String @map("user_id")
   name       String @db.VarChar(64)
-  keyHash    String @map("key_hash") @db.VarChar(255)
+  // 唯一索引：认证热路径按 keyHash 等值查找（sha256(sk-kb-xxx)，明文不落库）
+  keyHash    String @unique @map("key_hash") @db.VarChar(255)
   keyPreview String @map("key_preview") @db.VarChar(32) // 如 sk-kb-8f2a****3c1d
 
   /// 授权的知识库 ID 数组

@@ -6,6 +6,7 @@ import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis'
 import type Redis from 'ioredis';
 import { PrismaModule } from './prisma/prisma.module';
 import { REDIS_CLIENT, RedisModule } from './redis/redis.module';
+import { IpWhitelistGuard } from './common/ip-whitelist.guard';
 import { StorageModule } from './storage/storage.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
@@ -52,6 +53,8 @@ import { LogModule } from './log/log.module';
   providers: [
     // 全局 Guard：注册顺序在 JwtAuthGuard 之前，登录/注册等公开接口同样受保护
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // IP 白名单（settings.security.ipWhitelist 非空时全站生效，空 = 关闭）
+    { provide: APP_GUARD, useClass: IpWhitelistGuard },
   ],
 })
 export class AppModule {}

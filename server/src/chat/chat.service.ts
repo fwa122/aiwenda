@@ -12,6 +12,7 @@ import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { genId } from '../common/id.util';
 import { canReadKb } from '../common/kb-access';
+import { findSensitiveWord } from '../common/sensitive-filter';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiServiceClient, AiSseEvent } from '../integrations/ai-service.client';
 import { EmbeddingStateService } from '../settings/embedding-state.service';
@@ -188,6 +189,14 @@ export class ChatService {
       }
     }
 
+    // 1.6 敏感词过滤（settings.security.enableSensitiveFilter，默认开启）：
+    // 命中即拒答——在会话创建与消息落库之前拦截，不产生脏数据，上游零 LLM 消耗
+    const settings = await this.prisma.systemSetting.findUnique({ where: { id: 1 } });
+    const security: any = settings?.security || {};
+    if (security.enableSensitiveFilter !== false && findSensitiveWord(dto.question)) {
+      throw new BadRequestException('您的提问包含敏感内容，已被安全过滤拦截，请调整表述后重试');
+    }
+
     // 1. 会话：有则校验归属，无则代建（★方案已确认的兜底行为）
     let conversation;
     if (dto.conversationId) {
@@ -238,8 +247,7 @@ export class ChatService {
       },
     });
 
-    // 3. 系统设置（模型采样参数 / 上下文轮数 / 提示词 / 兜底话术）
-    const settings = await this.prisma.systemSetting.findUnique({ where: { id: 1 } });
+    // 3. 系统设置（已在 1.6 加载：模型采样参数 / 上下文轮数 / 提示词 / 兜底话术）
     const modelSettings: any = settings?.model || {};
     const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
     const systemPrompt: string = modelSettings.systemPrompt || undefined;

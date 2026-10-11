@@ -19,7 +19,7 @@
         </div>
 
         <div v-if="kb" class="head-right">
-          <el-button @click="handleRebuild">
+          <el-button v-if="canWrite" @click="handleRebuild">
             <el-icon><RefreshRight /></el-icon>重建索引
           </el-button>
           <el-button type="primary" @click="$router.push('/chat')">
@@ -53,13 +53,14 @@
                 <el-select v-model="docStatus" placeholder="全部状态" clearable style="width: 130px" @change="loadDocs">
                   <el-option v-for="(v, k) in docStatusMap" :key="k" :label="v.label" :value="k" />
                 </el-select>
-                <el-button v-if="selectedDocs.length" type="danger" plain @click="handleBatchDelete">
+                <el-button v-if="canWrite && selectedDocs.length" type="danger" plain @click="handleBatchDelete">
                   批量删除（{{ selectedDocs.length }}）
                 </el-button>
               </div>
 
               <div class="right">
                 <el-upload
+                  v-if="canWrite"
                   :http-request="customUpload"
                   :show-file-list="false"
                   multiple
@@ -123,8 +124,8 @@
                   <el-button link type="primary" size="small" @click="openPreview(row)">预览</el-button>
                   <el-button link type="primary" size="small" @click="handleDownload(row)">下载</el-button>
                   <el-button link type="primary" size="small" @click="openChunks(row)">切片</el-button>
-                  <el-button link type="primary" size="small" @click="handleReparse(row)">重解析</el-button>
-                  <el-button link type="danger" size="small" @click="handleDeleteDoc(row)">删除</el-button>
+                  <el-button v-if="canWrite" link type="primary" size="small" @click="handleReparse(row)">重解析</el-button>
+                  <el-button v-if="canWrite" link type="danger" size="small" @click="handleDeleteDoc(row)">删除</el-button>
                 </template>
               </el-table-column>
               <template #empty>
@@ -259,7 +260,7 @@
                 <span class="form-hint">{{ configForm.temperature.toFixed(1) }}</span>
               </el-form-item>
 
-              <el-form-item>
+              <el-form-item v-if="canWrite">
                 <el-button type="primary" :loading="saving" @click="handleSaveConfig">保存配置</el-button>
                 <el-button @click="resetConfigForm">重置</el-button>
               </el-form-item>
@@ -411,7 +412,8 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useKnowledgeStore } from '@/store'
+import { useKnowledgeStore, useUserStore } from '@/store'
+import { canWriteKb } from '@/utils/kb-access'
 import { retrievalTest, getDocumentChunks, downloadDocument } from '@/api/knowledge'
 import { watchKb, stopWatch } from '@/composables/useParseWatcher'
 import { getUsageStats } from '@/api/user'
@@ -422,9 +424,12 @@ import DocPreviewDrawer from '@/components/DocPreviewDrawer.vue'
 
 const route = useRoute()
 const knowledgeStore = useKnowledgeStore()
+const userStore = useUserStore()
 
 const activeTab = ref('docs')
 const kb = computed(() => knowledgeStore.current)
+/** 写权限门控（与后端 kb-access 口径一致）：非 owner 隐藏写操作入口，避免点击后 403 */
+const canWrite = computed(() => canWriteKb(kb.value, userStore.profile))
 
 /* ---------------- 文档 ---------------- */
 const docKeyword = ref('')

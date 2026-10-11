@@ -224,6 +224,7 @@
               </el-form-item>
               <el-form-item label="敏感词过滤">
                 <el-switch v-model="settings.security.enableSensitiveFilter" />
+                <span class="form-hint">开启后拦截命中敏感词的用户提问</span>
               </el-form-item>
               <el-form-item label="会话超时">
                 <el-input-number v-model="settings.security.sessionTimeout" :min="15" :max="1440" :step="15" />
@@ -234,9 +235,10 @@
                   v-model="settings.security.ipWhitelist"
                   type="textarea"
                   :rows="2"
-                  placeholder="多个 IP 用英文逗号分隔，留空表示不限制"
+                  placeholder="支持精确 IP 与 IPv4 CIDR（如 192.168.1.0/24），逗号分隔，留空表示不限制"
                   style="width: 100%"
                 />
+                <span class="form-hint">全站生效，保存后约 30 秒内生效；本机 127.0.0.1 恒放行</span>
               </el-form-item>
               <el-form-item>
                 <el-button type="primary" :loading="saving" @click="saveSettings">保存配置</el-button>

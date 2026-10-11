@@ -76,10 +76,10 @@
                   <el-dropdown-item command="detail">
                     <el-icon><View /></el-icon>查看详情
                   </el-dropdown-item>
-                  <el-dropdown-item command="rebuild">
+                  <el-dropdown-item v-if="canWrite(kb)" command="rebuild">
                     <el-icon><RefreshRight /></el-icon>重建索引
                   </el-dropdown-item>
-                  <el-dropdown-item command="delete" divided>
+                  <el-dropdown-item v-if="canWrite(kb)" command="delete" divided>
                     <el-icon><Delete /></el-icon>删除
                   </el-dropdown-item>
                 </el-dropdown-menu>
@@ -184,7 +184,8 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { useKnowledgeStore } from '@/store'
+import { useKnowledgeStore, useUserStore } from '@/store'
+import { canWriteKb } from '@/utils/kb-access'
 import { getKnowledgeList, uploadDocuments } from '@/api/knowledge'
 import { ensureNotifyPermission, watchKb, stopWatch } from '@/composables/useParseWatcher'
 import {
@@ -197,6 +198,10 @@ import { formatSize, formatNumber, fromNow } from '@/utils/format'
 
 const router = useRouter()
 const knowledgeStore = useKnowledgeStore()
+const userStore = useUserStore()
+
+/** 写权限门控（与后端 kb-access 口径一致）：非 owner 隐藏重建/删除入口，避免点击后 403 */
+const canWrite = (kb) => canWriteKb(kb, userStore.profile)
 
 const keyword = ref('')
 const status = ref('')

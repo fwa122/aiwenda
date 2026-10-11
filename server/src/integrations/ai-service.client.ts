@@ -98,8 +98,43 @@ export class AiServiceClient {
     }).catch((e) => this.logger.warn(`投递解析任务失败 doc=${docId}: ${e?.message}`));
   }
 
-  /** 读取 AI 服务的真实模型信息（供设置页锁定展示，不支持前端切换） */
-  async modelInfo(): Promise<{ model: string; embedding: any; available: boolean }> {
+  /** 通知 Python 失效 key 缓存（fire-and-forget，失败仅告警不阻塞保存；worker 靠 TTL 兜底） */
+  reloadKeys(): void {
+    fetch(`${this.baseUrl}/internal/keys/reload`, {
+      method: 'POST',
+      headers: this.authHeaders(),
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5000),
+    }).catch((e) => this.logger.warn(`推送 key 重载失败: ${e?.message}`));
+  }
+
+  /** 验证 provider key 有效性（Python 侧 GET /models 探测，不消耗对话 token） */
+  async verifyKey(provider: string, key?: string): Promise<{ valid: boolean; message: string }> {
+    const res = await fetch(`${this.baseUrl}/internal/keys/verify`, {
+      method: 'POST',
+      headers: this.authHeaders(),
+      body: JSON.stringify({ provider, key: key || null }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        detail = (await res.json())?.detail || detail;
+      } catch {
+        /* 保留状态码 */
+      }
+      throw new Error(detail);
+    }
+    return res.json();
+  }
+
+  /** 读取 AI 服务的真实模型信息（供设置页锁定展示，不支持前端切换）；keyPresence 供设置页展示 key 来源 */
+  async modelInfo(): Promise<{
+    model: string;
+    embedding: any;
+    available: boolean;
+    keyPresence: Record<string, { configured: boolean; source: string }> | null;
+  }> {
     try {
       const res = await fetch(`${this.baseUrl}/internal/health`, {
         headers: this.authHeaders(),
@@ -107,9 +142,14 @@ export class AiServiceClient {
       });
       if (!res.ok) throw new Error('bad status');
       const data: any = await res.json();
-      return { model: data?.llm?.model || '', embedding: data?.embedding || null, available: true };
+      return {
+        model: data?.llm?.model || '',
+        embedding: data?.embedding || null,
+        available: true,
+        keyPresence: data?.keyPresence || null,
+      };
     } catch {
-      return { model: '', embedding: null, available: false };
+      return { model: '', embedding: null, available: false, keyPresence: null };
     }
   }
 

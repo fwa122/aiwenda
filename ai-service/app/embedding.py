@@ -11,8 +11,10 @@ from openai import OpenAI
 
 from .config import settings
 from .db import ensure_embedding_cache, fetch_all, pool, vec_literal
+from .keystore import resolve_key
 
-_clients: dict[str, OpenAI] = {}
+# 缓存键 (provider, key)：key 由 keystore 动态解析（DB 覆盖 > .env），换 key 自动建新 client
+_clients: dict[tuple[str, str], OpenAI] = {}
 
 # 单批调用重试参数（针对限流/网络抖动；指数退避）
 _MAX_ATTEMPTS = 4
@@ -21,26 +23,28 @@ _BASE_BACKOFF = 1.0
 
 def _get_client() -> OpenAI:
     provider = settings.embedding_provider
-    if provider not in _clients:
+    key = resolve_key(provider)
+    cache_key = (provider, key)
+    if cache_key not in _clients:
         if provider == 'qianwen':
-            if not settings.qianwen_api_key:
+            if not key:
                 raise ValueError('QIANWEN_API_KEY 未配置')
-            _clients[provider] = OpenAI(
-                api_key=settings.qianwen_api_key,
+            _clients[cache_key] = OpenAI(
+                api_key=key,
                 base_url=settings.qianwen_base_url,
                 timeout=60.0,
                 max_retries=2,  # SDK 内置重试（网络层），外层再兜批量级失败
             )
         else:  # zhipu
-            if not settings.zhipu_api_key:
+            if not key:
                 raise ValueError('ZHIPU_API_KEY 未配置')
-            _clients[provider] = OpenAI(
-                api_key=settings.zhipu_api_key,
+            _clients[cache_key] = OpenAI(
+                api_key=key,
                 base_url=settings.zhipu_base_url,
                 timeout=60.0,
                 max_retries=2,
             )
-    return _clients[provider]
+    return _clients[cache_key]
 
 
 def _create_with_retry(client: OpenAI, batch: list[str]) -> list[list[float]]:

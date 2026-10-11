@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Put, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { AiServiceClient } from '../integrations/ai-service.client';
 import { SettingsService } from './settings.service';
-import { UpdateSettingsDto } from './dto/settings.dto';
+import { UpdateSettingsDto, VerifyKeyDto } from './dto/settings.dto';
 
 @Controller('settings')
 @UseGuards(JwtAuthGuard)
@@ -42,5 +42,14 @@ export class SettingsController {
   @Roles('admin')
   triggerReembed() {
     return this.ai.triggerReembed();
+  }
+
+  /** 验证 LLM API Key 有效性（admin）：key 缺省时验证当前生效值（DB 覆盖 > .env） */
+  @Post('verify-key')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @HttpCode(200)
+  verifyKey(@Body() dto: VerifyKeyDto) {
+    return this.ai.verifyKey(dto.provider, dto.key);
   }
 }

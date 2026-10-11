@@ -7,11 +7,14 @@ import traceback
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
+from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from .. import llm, parser, retrieval
 from ..config import settings
 from ..db import _embedding_cache_ddl, ensure_embedding_state, execute, fetch_all, fetch_one, pool
+from ..keystore import invalidate as keystore_invalidate
+from ..keystore import resolve_key as keystore_resolve_key
 from ..tasks import parse_document, reembed_document
 
 
@@ -552,3 +555,35 @@ def chat_title(body: TitleRequest):
     except Exception as exc:  # noqa: BLE001
         print(f'[chat] 会话命名失败: {exc}')
         return {'title': ''}
+
+
+# ============================== 运行时 API Key ==============================
+
+class KeyVerifyRequest(BaseModel):
+    provider: str = Field(pattern='^(zhipu|qianwen|moonshot)$')
+    key: str | None = None  # 传入时验证该值（保存前预检）；缺省验证当前生效 key
+
+
+@router.post('/keys/reload')
+def keys_reload():
+    """Node 保存 key 后推送：失效 keystore 缓存，下次读取重查 DB（web 进程即时生效）"""
+    keystore_invalidate()
+    return {'ok': True}
+
+
+@router.post('/keys/verify')
+def keys_verify(body: KeyVerifyRequest):
+    """验证 provider key 有效性：OpenAI 兼容 GET /models 列表探测（不消耗对话 token）。
+    任何失败（401/网络/超时）返回 valid=false，错误文案不回显 key 本身。"""
+    key = (body.key or '').strip() or keystore_resolve_key(body.provider)
+    if not key:
+        return {'valid': False, 'message': f'{body.provider.upper()}_API_KEY 未配置'}
+    base_url = getattr(settings, f'{body.provider}_base_url')
+    try:
+        client = OpenAI(api_key=key, base_url=base_url, timeout=10.0, max_retries=0)
+        client.models.list()
+        return {'valid': True, 'message': 'key 有效'}
+    except Exception as exc:  # noqa: BLE001
+        message = str(exc)[:200].replace(key, '***')
+        print(f'[keys] 验证 {body.provider} key 失败: {message}')
+        return {'valid': False, 'message': message or '验证失败'}

@@ -16,9 +16,53 @@
               <div class="readonly-model">
                 <el-tag v-if="runtimeModel" type="success" effect="light">{{ runtimeModel }}</el-tag>
                 <el-tag v-else type="info" effect="light">未连接 AI 服务</el-tag>
-                <span class="form-hint">由服务端（ai-service/.env）配置，暂不支持前端切换</span>
+                <span class="form-hint">由服务端配置（设置页 API Key 优先，其次 ai-service/.env），暂不支持切换</span>
               </div>
             </el-form-item>
+            <el-form-item label="LLM API Key">
+              <div class="key-presence-row">
+                <el-tag
+                  v-for="p in API_KEY_PROVIDERS"
+                  :key="p.key"
+                  size="small"
+                  :type="keyStatusType(p.key)"
+                  effect="light"
+                >
+                  {{ p.label }} · {{ keyStatusText(p.key) }}
+                </el-tag>
+              </div>
+            </el-form-item>
+            <!-- API Key 管理（admin）：保存后写入 DB 即时生效，无需重启服务 -->
+            <template v-if="isAdmin">
+              <el-divider content-position="left">API Key 管理</el-divider>
+              <el-form-item v-for="p in API_KEY_PROVIDERS" :key="p.key" :label="p.label">
+                <div class="api-key-row">
+                  <el-input
+                    v-model="apiKeyInputs[p.key]"
+                    type="password"
+                    show-password
+                    clearable
+                    :placeholder="apiKeyPlaceholder(p.key)"
+                    style="flex: 1"
+                  />
+                  <el-button
+                    :loading="keyVerifying === p.key"
+                    :disabled="!apiKeyInputs[p.key]"
+                    @click="handleVerifyKey(p.key)"
+                  >验证</el-button>
+                  <el-button
+                    v-if="apiKeyState[p.key]?.configured"
+                    :disabled="keySaving"
+                    @click="handleClearKey(p.key)"
+                  >清除</el-button>
+                </div>
+                <div class="form-tip">{{ p.hint }}</div>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" :loading="keySaving" @click="saveApiKeys">保存 API Key</el-button>
+                <span class="form-hint">保存后全链路（问答/嵌入/精排/OCR）即时生效，无需重启服务</span>
+              </el-form-item>
+            </template>
             <el-form-item label="温度 Temperature">
               <el-slider v-model="settings.model.temperature" :min="0" :max="1" :step="0.1" style="width: 320px" />
               <span class="form-hint">{{ settings.model.temperature.toFixed(1) }} · 越小越严谨</span>
@@ -429,6 +473,7 @@ import { useUserStore, useKnowledgeStore } from '@/store'
 import {
   getSystemSettings,
   updateSystemSettings,
+  verifyApiKey,
   getEmbeddingState,
   triggerReembed,
   changePassword,
@@ -452,14 +497,18 @@ const activeTab = ref('model')
 const loading = ref(false)
 const saving = ref(false)
 const runtimeModel = ref('')
+/** 各渠道 key 在场状态（来自 AI 服务 health，不含 key 本身）：{configured, source} */
+const keyPresence = ref(null)
 
-/** 读取 AI 服务当前真实生效的模型（只读展示） */
+/** 读取 AI 服务当前真实生效的模型（只读展示）与 key 在场状态 */
 async function loadRuntimeModel() {
   try {
     const res = await getRuntimeModel()
     runtimeModel.value = res?.model || ''
+    keyPresence.value = res?.keyPresence || null
   } catch {
     runtimeModel.value = ''
+    keyPresence.value = null
   }
 }
 
@@ -505,7 +554,10 @@ async function loadSettings() {
   loading.value = true
   try {
     const data = await getSystemSettings()
-    Object.assign(settings, clone(data))
+    // apiKeys 为脱敏形态（configured/tail/source），单独存放，避免随 clone(settings) 回传污染保存请求
+    const { apiKeys, ...rest } = clone(data) || {}
+    Object.assign(settings, rest)
+    Object.assign(apiKeyState, apiKeys || {})
   } finally {
     loading.value = false
   }
@@ -518,6 +570,98 @@ async function saveSettings() {
     ElMessage.success('配置已保存')
   } finally {
     saving.value = false
+  }
+}
+
+/* ---------------- LLM API Key 管理（admin） ---------------- */
+const API_KEY_PROVIDERS = [
+  { key: 'zhipu', label: '智谱', hint: 'GLM 对话 / embedding / rerank / OCR（OpenAI 兼容）' },
+  { key: 'qianwen', label: '通义千问', hint: 'qwen/deepseek 对话 / qwen embedding（DashScope）' },
+  { key: 'moonshot', label: 'Kimi', hint: 'kimi/moonshot 对话（Moonshot 开放平台）' }
+]
+
+/** 脱敏状态（GET /settings 返回）：{configured, tail, source} */
+const apiKeyState = reactive({ zhipu: null, qianwen: null, moonshot: null })
+/** 新输入的 key（仅保存时提交，不回显明文） */
+const apiKeyInputs = reactive({ zhipu: '', qianwen: '', moonshot: '' })
+const keySaving = ref(false)
+const keyVerifying = ref('')
+
+function keyStatusText(p) {
+  if (apiKeyState[p]?.configured) return `已配置（尾号 ${apiKeyState[p].tail}）`
+  if (keyPresence.value?.[p]?.configured) return '.env 默认'
+  return '未配置'
+}
+
+function keyStatusType(p) {
+  if (apiKeyState[p]?.configured || keyPresence.value?.[p]?.configured) return 'success'
+  return 'danger'
+}
+
+function apiKeyPlaceholder(p) {
+  if (apiKeyState[p]?.configured) return `输入新值可更换（当前尾号 ${apiKeyState[p].tail}）`
+  if (keyPresence.value?.[p]?.configured) return '未在设置页配置 · 使用服务端 .env 默认 key'
+  return '未配置 · 请粘贴 API Key'
+}
+
+/** 保存：仅提交有输入的渠道；后端语义为「非空覆盖」，未提及渠道保持原值 */
+async function saveApiKeys() {
+  const payload = {}
+  for (const p of API_KEY_PROVIDERS) {
+    if (apiKeyInputs[p.key] !== '') payload[p.key] = apiKeyInputs[p.key]
+  }
+  if (!Object.keys(payload).length) {
+    ElMessage.info('请先输入要配置的 API Key')
+    return
+  }
+  keySaving.value = true
+  try {
+    await updateSystemSettings({ apiKeys: payload })
+    ElMessage.success('API Key 已保存并即时生效')
+    apiKeyInputs.zhipu = ''
+    apiKeyInputs.qianwen = ''
+    apiKeyInputs.moonshot = ''
+    await Promise.all([loadSettings(), loadRuntimeModel()])
+  } finally {
+    keySaving.value = false
+  }
+}
+
+/** 清除：空串语义=删除该渠道配置，回落 .env 默认（若 .env 也未配置则相关功能不可用） */
+async function handleClearKey(p) {
+  try {
+    await ElMessageBox.confirm(
+      '清除后该渠道将回落服务端 .env 默认 key；若 .env 未配置，对应功能将不可用。确定清除？',
+      '清除 API Key',
+      { type: 'warning', confirmButtonText: '清除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  keySaving.value = true
+  try {
+    await updateSystemSettings({ apiKeys: { [p]: '' } })
+    ElMessage.success('已清除，回落 .env 默认值')
+    await Promise.all([loadSettings(), loadRuntimeModel()])
+  } finally {
+    keySaving.value = false
+  }
+}
+
+/** 验证：优先验证输入框中的新值（保存前预检），输入为空时验证当前生效值 */
+async function handleVerifyKey(p) {
+  keyVerifying.value = p
+  try {
+    const res = await verifyApiKey({ provider: p, key: apiKeyInputs[p] || undefined })
+    if (res?.valid) {
+      ElMessage.success(`${API_KEY_PROVIDERS.find((x) => x.key === p)?.label || p} Key 验证通过`)
+    } else {
+      ElMessage.error(`验证失败：${res?.message || '未知错误'}`)
+    }
+  } catch (e) {
+    ElMessage.error(`验证失败：${e?.message || '服务不可用'}`)
+  } finally {
+    keyVerifying.value = ''
   }
 }
 
@@ -857,6 +1001,19 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.key-presence-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.api-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
 }
 
 .form-tip {

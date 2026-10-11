@@ -189,6 +189,12 @@ export function updateSystemSettings(payload) {
   return request({ url: '/v1/settings', method: 'put', data: payload })
 }
 
+/** 验证 LLM API Key 有效性（admin）：key 缺省时验证当前生效值（DB 覆盖 > .env） */
+export function verifyApiKey(payload) {
+  if (USE_MOCK) return mockOk({ valid: true, message: 'key 有效（mock）' }, 400)
+  return request({ url: '/v1/settings/verify-key', method: 'post', data: payload })
+}
+
 /** 嵌入渠道签名与全库重嵌入状态（admin）：变更检测 + 进度 + 成本预估 */
 export function getEmbeddingState() {
   if (USE_MOCK) {

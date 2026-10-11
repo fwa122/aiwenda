@@ -20,6 +20,7 @@ import httpx
 from .config import settings
 from .db import pool, fetch_all, vec_literal
 from .embedding import embed_query
+from .keystore import resolve_key
 
 # 向量召回：取候选池（top-N，N 远大于 topK）用于后续融合
 VECTOR_SQL = """
@@ -97,7 +98,7 @@ def _rerank(query: str, rows: list[dict]) -> list[dict]:
         with httpx.Client(timeout=10.0) as client:
             resp = client.post(
                 f'{settings.zhipu_base_url}/rerank',
-                headers={'Authorization': f'Bearer {settings.zhipu_api_key}'},
+                headers={'Authorization': f'Bearer {resolve_key("zhipu")}'},
                 json={
                     'model': settings.rerank_model,
                     'query': query[:4000],

@@ -6,6 +6,7 @@
 from openai import OpenAI
 
 from .config import settings
+from .keystore import resolve_key
 
 # 模型名前缀 → Provider 注册表（小写匹配）
 PROVIDER_PREFIXES: dict[str, str] = {
@@ -16,7 +17,8 @@ PROVIDER_PREFIXES: dict[str, str] = {
     'deepseek': 'qianwen',  # 千问平台的 deepseek-v4-pro 走 dashscope 兼容端点
 }
 
-_clients: dict[str, OpenAI] = {}
+# 缓存键 (provider, key)：key 由 keystore 动态解析（DB 覆盖 > .env），换 key 自动建新 client
+_clients: dict[tuple[str, str], OpenAI] = {}
 
 
 def resolve_provider(model: str | None) -> str | None:
@@ -33,33 +35,38 @@ def resolve_default_provider() -> str:
 
 
 def _get_client(provider: str) -> OpenAI:
-    if provider in _clients:
-        return _clients[provider]
+    key = resolve_key(provider)
+    cache_key = (provider, key)
+    if cache_key in _clients:
+        return _clients[cache_key]
+    # 防泄漏上限：反复换 key（配置试错）时旧 client 依赖 GC 关闭连接池
+    if len(_clients) > 6:
+        _clients.clear()
     if provider == 'qianwen':
-        if not settings.qianwen_api_key:
+        if not key:
             raise ValueError('QIANWEN_API_KEY 未配置')
         client = OpenAI(
-            api_key=settings.qianwen_api_key,
+            api_key=key,
             base_url=settings.qianwen_base_url,
             timeout=60.0,
         )
     elif provider == 'moonshot':
-        if not settings.moonshot_api_key:
+        if not key:
             raise ValueError('MOONSHOT_API_KEY 未配置')
         client = OpenAI(
-            api_key=settings.moonshot_api_key,
+            api_key=key,
             base_url=settings.moonshot_base_url,
             timeout=60.0,
         )
     else:
-        if not settings.zhipu_api_key:
+        if not key:
             raise ValueError('ZHIPU_API_KEY 未配置')
         client = OpenAI(
-            api_key=settings.zhipu_api_key,
+            api_key=key,
             base_url=settings.zhipu_base_url,
             timeout=60.0,
         )
-    _clients[provider] = client
+    _clients[cache_key] = client
     return client
 
 

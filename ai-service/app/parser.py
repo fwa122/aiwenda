@@ -11,6 +11,7 @@ import re
 import httpx
 
 from .config import settings
+from .keystore import resolve_key
 
 _HEADING_PATTERN = re.compile(r'^(第[一二三四五六七八九十百\d]+[章节条款部分篇]|[（(]?\d+(?:\.\d+)*[)）]?[\s、.．]|[一二三四五六七八九十]+[、.．])')
 
@@ -162,7 +163,7 @@ def _ocr_page_image(page) -> str:
         with httpx.Client(timeout=120.0) as client:
             resp = client.post(
                 f'{settings.zhipu_base_url}/layout_parsing',
-                headers={'Authorization': f'Bearer {settings.zhipu_api_key}'},
+                headers={'Authorization': f'Bearer {resolve_key("zhipu")}'},
                 json={'model': 'glm-ocr', 'file': f'data:image/png;base64,{b64}'},
             )
             resp.raise_for_status()

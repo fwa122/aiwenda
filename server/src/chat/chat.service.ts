@@ -140,15 +140,16 @@ export class ChatService {
     return out;
   }
 
-  /** 当前真实生效的模型（来自 Python AI 服务） */
+  /** 当前真实生效的模型（来自 Python AI 服务）；keyPresence 供设置页展示各渠道 key 来源 */
   async modelInfo() {
     const info = await this.ai.modelInfo();
     return {
       model: info.model,
       embedding: info.embedding,
       available: info.available,
+      keyPresence: info.keyPresence,
       note: info.available
-        ? '当前模型由服务端（ai-service/.env）配置，暂不支持前端切换'
+        ? '当前模型由服务端配置（设置页 API Key 优先，其次 ai-service/.env），暂不支持前端切换'
         : 'AI 服务不可用，无法获取模型信息',
     };
   }

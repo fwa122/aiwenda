@@ -136,8 +136,15 @@ export class ConversationService {
   /**
    * 消息反馈三态切换：like → dislike → null
    * 通过「先查消息所属会话归属」实现越权防护
+   * 点踩可携带原因标签与备注；like/null 时清空两者，避免残留脏数据
    */
-  async feedback(userId: string, messageId: string, type: 'like' | 'dislike' | null) {
+  async feedback(
+    userId: string,
+    messageId: string,
+    type: 'like' | 'dislike' | null,
+    reason?: 'offtopic' | 'citation' | 'outdated' | 'other',
+    note?: string,
+  ) {
     const msg = await this.prisma.message.findUnique({
       where: { id: messageId },
       include: { conversation: { select: { userId: true } } },
@@ -147,7 +154,11 @@ export class ConversationService {
     }
     const updated = await this.prisma.message.update({
       where: { id: messageId },
-      data: { feedback: type },
+      data: {
+        feedback: type,
+        feedbackReason: type === 'dislike' ? (reason ?? null) : null,
+        feedbackNote: type === 'dislike' ? (note ?? null) : null,
+      },
     });
     return { id: updated.id, feedback: updated.feedback };
   }

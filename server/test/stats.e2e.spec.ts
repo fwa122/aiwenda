@@ -28,6 +28,10 @@ const USER_ADMIN = `e2e_stats_a_${RUN}`; // 管理员（验证 200）
 // 唯一模型名：并行文件（chat.e2e 也写 messages）不会撞同一聚合分组，可对计数做精确断言
 const UNIQUE_MODEL = `e2e-model-${RUN}`;
 const CONV_ID = `conv_stats_${RUN}`;
+// v0.9.39：引用来源种子（差证明细反查 sourceDocs/refKb）与回流用例目标库
+const KB_ID = `kb_stats_${RUN}`;
+const DOC_ID = `doc_stats_${RUN}`;
+const DOC_NAME = `统计测试文档_${RUN}.md`;
 
 let app: INestApplication;
 let prisma: PrismaService;
@@ -143,13 +147,42 @@ beforeAll(async () => {
     update: {},
   });
 
+  // v0.9.39：引用来源链路种子（库/文档/坐标），差评 a2 挂 1 条引用
+  await prisma.knowledgeBase.create({
+    data: {
+      id: KB_ID,
+      name: `统计测试库_${RUN}`,
+      userId: adminId,
+      status: 'ready',
+      retrieverConfig: {},
+      llmConfig: {},
+    },
+  });
+  await prisma.document.create({
+    data: { id: DOC_ID, kbId: KB_ID, name: DOC_NAME, type: 'md' },
+  });
+  await prisma.messageSource.create({
+    data: {
+      messageId: `msg_s_a2_${RUN}`,
+      kbId: KB_ID,
+      docId: DOC_ID,
+      chunkId: `ck_stats_${RUN}`,
+      chunkIndex: 0,
+      page: 1,
+      score: 0.9,
+      sortOrder: 0,
+    },
+  });
+
   viewerToken = await login(USER_VIEWER);
   adminToken = await login(USER_ADMIN);
 });
 
 afterAll(async () => {
-  // 只清自己的数据（并行文件共享同一测试库）：会话级联删除消息，用户按前缀删
+  // 只清自己的数据（并行文件共享同一测试库）：会话级联删除消息与引用坐标，
+  // 库级联删除文档/评测用例，用户按前缀删
   await prisma.conversation.deleteMany({ where: { id: CONV_ID } }).catch(() => {});
+  await prisma.knowledgeBase.deleteMany({ where: { id: KB_ID } }).catch(() => {});
   await prisma.user
     .deleteMany({ where: { username: { startsWith: 'e2e_stats_' } } })
     .catch(() => {});
@@ -242,5 +275,99 @@ describe('GET /api/v1/stats/feedback（评价分析，仅 admin）', () => {
     expect(mine.conversationId).toBe(CONV_ID);
     expect(mine.question).toBe('知识库迁移方案是什么？');
     expect(mine.answer).toContain('方案 B');
+  });
+});
+
+describe('v0.9.39 消息反馈闭环（点踩原因标注 + 差评回流）', () => {
+  it('带 reason/note 点踩落库', async () => {
+    const res = await probe('POST', `/api/v1/messages/msg_s_a1_${RUN}/feedback`, {
+      token: viewerToken,
+      body: { type: 'dislike', reason: 'offtopic', note: '答非所问样例' },
+    });
+    expect(res.status).toBe(201);
+
+    const row = await prisma.message.findUnique({ where: { id: `msg_s_a1_${RUN}` } });
+    expect(row.feedback).toBe('dislike');
+    expect(row.feedbackReason).toBe('offtopic');
+    expect(row.feedbackNote).toBe('答非所问样例');
+  });
+
+  it('差证明细携带原因/差评人/引用文档/首引用库，回流前 reflowed=false', async () => {
+    // a2 补一个带原因的点踩（种子直接落库无 reason）
+    const set = await probe('POST', `/api/v1/messages/msg_s_a2_${RUN}/feedback`, {
+      token: viewerToken,
+      body: { type: 'dislike', reason: 'citation', note: '引用错了' },
+    });
+    expect(set.status).toBe(201);
+
+    const res = await probe('GET', '/api/v1/stats/feedback', { token: adminToken });
+    expect(res.status).toBe(200);
+    const mine = (res.body.data.disliked as Array<Record<string, any>>).find(
+      (r) => r.id === `msg_s_a2_${RUN}`
+    );
+    expect(mine).toBeTruthy();
+    expect(mine.reason).toBe('citation');
+    expect(mine.note).toBe('引用错了');
+    expect(mine.username).toBe(USER_VIEWER);
+    expect(mine.sourceDocs).toEqual([DOC_NAME]);
+    expect(mine.refKbId).toBe(KB_ID);
+    expect(mine.refKbName).toBe(`统计测试库_${RUN}`);
+    expect(mine.reflowed).toBe(false);
+  });
+
+  it('like 清空 reason/note，避免残留脏数据', async () => {
+    const res = await probe('POST', `/api/v1/messages/msg_s_a1_${RUN}/feedback`, {
+      token: viewerToken,
+      body: { type: 'like' },
+    });
+    expect(res.status).toBe(201);
+
+    const row = await prisma.message.findUnique({ where: { id: `msg_s_a1_${RUN}` } });
+    expect(row.feedback).toBe('like');
+    expect(row.feedbackReason).toBeNull();
+    expect(row.feedbackNote).toBeNull();
+  });
+
+  it('非法 reason 返回 400（DTO 白名单校验）', async () => {
+    const res = await probe('POST', `/api/v1/messages/msg_s_a2_${RUN}/feedback`, {
+      token: viewerToken,
+      body: { type: 'dislike', reason: 'hack' },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('越权（admin 点他人会话内消息）返回 404', async () => {
+    const res = await probe('POST', `/api/v1/messages/msg_s_a1_${RUN}/feedback`, {
+      token: adminToken,
+      body: { type: 'dislike', reason: 'other' },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('回流为 hardcase 后 reflowed=true；同库同 question 重复创建 400（查重兜底）', async () => {
+    const payload = {
+      question: '知识库迁移方案是什么？',
+      docNameContains: DOC_NAME,
+      keywords: ['迁移'],
+      isHard: true,
+      source: 'hardcase',
+    };
+    const created = await probe('POST', `/api/v1/knowledge/${KB_ID}/eval-cases`, {
+      token: adminToken,
+      body: payload,
+    });
+    expect(created.status).toBe(201);
+
+    const dup = await probe('POST', `/api/v1/knowledge/${KB_ID}/eval-cases`, {
+      token: adminToken,
+      body: payload,
+    });
+    expect(dup.status).toBe(400);
+
+    const res = await probe('GET', '/api/v1/stats/feedback', { token: adminToken });
+    const mine = (res.body.data.disliked as Array<Record<string, any>>).find(
+      (r) => r.id === `msg_s_a2_${RUN}`
+    );
+    expect(mine.reflowed).toBe(true);
   });
 });

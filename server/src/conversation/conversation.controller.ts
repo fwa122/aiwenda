@@ -71,6 +71,6 @@ export class MessageController {
     @Param('id') id: string,
     @Body() dto: MessageFeedbackDto
   ) {
-    return this.service.feedback(userId, id, dto.type);
+    return this.service.feedback(userId, id, dto.type, dto.reason, dto.note);
   }
 }

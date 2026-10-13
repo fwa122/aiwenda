@@ -470,8 +470,8 @@ function handleRegenerate(msgId) {
   chatStore.regenerate(msgId)
 }
 
-function handleFeedback(msgId, type) {
-  chatStore.feedback(msgId, type)
+function handleFeedback(msgId, type, reason, note) {
+  chatStore.feedback(msgId, type, reason, note)
 }
 
 /** 收藏回答：成功置星标；重复收藏（409 / Mock 提示）仅对齐本地状态；其余失败不置位 */

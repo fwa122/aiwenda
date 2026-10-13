@@ -403,12 +403,16 @@ export const useChatStore = defineStore('chat', {
       )
     },
 
-    /** 消息反馈 */
-    async feedback(msgId, type) {
+    /**
+     * 消息反馈：点赞保留三态切换（再点取消）；
+     * 点踩由 ChatMessage 弹窗选原因后确认，再点踩=改原因，不做取消
+     */
+    async feedback(msgId, type, reason, note) {
       const msg = this.messages.find((m) => m.id === msgId)
       if (!msg) return
-      msg.feedback = msg.feedback === type ? null : type
-      await chatApi.submitFeedback(msgId, msg.feedback)
+      msg.feedback =
+        type === 'dislike' ? 'dislike' : msg.feedback === 'like' ? null : 'like'
+      await chatApi.submitFeedback(msgId, msg.feedback, reason, note)
     }
   }
 })

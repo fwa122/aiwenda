@@ -69,7 +69,7 @@
             <button
               class="tool"
               :class="{ active: message.feedback === 'dislike' }"
-              @click="$emit('feedback', message.id, 'dislike')"
+              @click="openDislikeDialog"
             >
               <el-icon :size="14"><CircleClose /></el-icon>
             </button>
@@ -99,14 +99,58 @@
       </div>
     </div>
   </div>
+
+  <!-- 点踩原因弹窗：确认后才 emit，取消不打标 -->
+  <el-dialog
+    v-model="reasonVisible"
+    title="这个回答哪里没帮助？"
+    width="400px"
+    append-to-body
+    class="dislike-dialog"
+  >
+    <div class="reason-grid">
+      <button
+        v-for="r in REASONS"
+        :key="r.value"
+        type="button"
+        class="reason-chip"
+        :class="{ active: reasonValue === r.value }"
+        @click="reasonValue = r.value"
+      >
+        {{ r.label }}
+      </button>
+    </div>
+    <el-input
+      v-model="reasonNote"
+      type="textarea"
+      :rows="2"
+      maxlength="255"
+      show-word-limit
+      placeholder="补充说明（可选）"
+    />
+    <template #footer>
+      <el-button size="small" @click="reasonVisible = false">取消</el-button>
+      <el-button size="small" type="primary" :disabled="!reasonValue" @click="confirmDislike">
+        确认提交
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { renderMarkdown } from '@/utils/markdown'
 import { formatDateTime, formatDuration, formatNumber } from '@/utils/format'
 import SourceList from './SourceList.vue'
+
+/** 点踩原因预定义标签（与后端 MessageFeedbackDto 枚举一致） */
+const REASONS = [
+  { value: 'offtopic', label: '答非所问' },
+  { value: 'citation', label: '引用错误' },
+  { value: 'outdated', label: '内容过时' },
+  { value: 'other', label: '其他' }
+]
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -190,6 +234,23 @@ async function copyText(text) {
 
 async function handleCopy() {
   await copyText(props.message.content || '')
+}
+
+/* ---------- 点踩原因弹窗 ---------- */
+const reasonVisible = ref(false)
+const reasonValue = ref('')
+const reasonNote = ref('')
+
+/** 打开弹窗：已点踩过则预填原原因/备注，便于修改 */
+function openDislikeDialog() {
+  reasonValue.value = props.message.feedbackReason || ''
+  reasonNote.value = props.message.feedbackNote || ''
+  reasonVisible.value = true
+}
+
+function confirmDislike() {
+  emit('feedback', props.message.id, 'dislike', reasonValue.value, reasonNote.value.trim() || undefined)
+  reasonVisible.value = false
 }
 </script>
 
@@ -342,4 +403,36 @@ async function handleCopy() {
   font-size: 11.5px;
   color: var(--c-text-4);
 }
+
+/* 点踩原因弹窗 */
+.reason-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.reason-chip {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--c-text-2);
+  background: var(--c-bg-soft);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.reason-chip:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+
+.reason-chip.active {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  font-weight: 500;
+}
+
 </style>

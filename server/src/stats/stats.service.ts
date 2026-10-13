@@ -192,18 +192,47 @@ export class StatsService {
         WHERE role = 'assistant' AND status = 'done'
           AND created_at >= NOW() - make_interval(days => ${range}::int)
         GROUP BY 1 ORDER BY 1 ASC`,
+      // 差证明细（v0.9.39 扩展）：原因/备注、差评人、引用文档、首引用库（回流默认目标）、
+      // 已回流标记（该提问已存在于任一库的 hardcase 用例中）。question 保留截断展示，
+      // reflowed 匹配用完整提问，避免长问题被截断后反查失效
       this.prisma.$queryRaw`
         SELECT m.id,
                m.conversation_id AS "conversationId",
                m.created_at AS "createdAt",
                LEFT(m.content, 200) AS answer,
-               LEFT((
-                 SELECT q.content FROM messages q
-                 WHERE q.conversation_id = m.conversation_id
-                   AND q.role = 'user' AND q.created_at <= m.created_at
-                 ORDER BY q.created_at DESC LIMIT 1
-               ), 200) AS question
+               LEFT(q.content, 200) AS question,
+               m.feedback_reason AS reason,
+               m.feedback_note AS note,
+               u.username,
+               COALESCE(docs.docs, '[]'::json) AS "sourceDocs",
+               fs.kb_id AS "refKbId",
+               kb.name AS "refKbName",
+               EXISTS (
+                 SELECT 1 FROM eval_cases ec
+                 WHERE ec.source = 'hardcase' AND ec.question = q.content
+               ) AS reflowed
         FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        JOIN users u ON u.id = c.user_id
+        LEFT JOIN LATERAL (
+          SELECT q2.content FROM messages q2
+          WHERE q2.conversation_id = m.conversation_id
+            AND q2.role = 'user' AND q2.created_at <= m.created_at
+          ORDER BY q2.created_at DESC LIMIT 1
+        ) q ON true
+        LEFT JOIN LATERAL (
+          SELECT json_agg(DISTINCT d.name) AS docs
+          FROM message_sources ms
+          JOIN documents d ON d.id = ms.doc_id
+          WHERE ms.message_id = m.id
+        ) docs ON true
+        LEFT JOIN LATERAL (
+          SELECT ms.kb_id FROM message_sources ms
+          WHERE ms.message_id = m.id
+          ORDER BY ms.sort_order ASC, ms.id ASC
+          LIMIT 1
+        ) fs ON true
+        LEFT JOIN knowledge_bases kb ON kb.id = fs.kb_id
         WHERE m.role = 'assistant' AND m.feedback = 'dislike'
         ORDER BY m.created_at DESC
         LIMIT 20`,
@@ -236,6 +265,13 @@ export class StatsService {
         createdAt: Date;
         answer: string;
         question: string | null;
+        reason: string | null;
+        note: string | null;
+        username: string | null;
+        sourceDocs: string[] | null;
+        refKbId: string | null;
+        refKbName: string | null;
+        reflowed: boolean;
       }>,
     };
   }

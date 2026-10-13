@@ -263,6 +263,12 @@ model Message {
   /// like | dislike | null
   feedback String? @db.VarChar(16)
 
+  /// 点踩原因标签：offtopic(答非所问) | citation(引用错误) | outdated(内容过时) | other(其他)
+  feedbackReason String? @map("feedback_reason") @db.VarChar(64)
+
+  /// 反馈自由备注（最长 255）
+  feedbackNote String? @map("feedback_note") @db.VarChar(255)
+
   createdAt DateTime @default(now()) @map("created_at")
 
   conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)

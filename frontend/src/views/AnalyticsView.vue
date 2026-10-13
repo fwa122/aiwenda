@@ -178,25 +178,48 @@
       </div>
 
       <div class="panel">
-        <div class="panel-title">最近差评（{{ fb.disliked?.length || 0 }} 条）</div>
+        <div class="panel-title">最近差评（{{ fb.disliked?.length || 0 }} 条）· 可一键转难例回流评测</div>
         <el-table v-if="fb.disliked?.length" :data="fb.disliked" size="small">
-          <el-table-column label="用户提问" min-width="200">
+          <el-table-column label="用户提问" min-width="180">
             <template #default="{ row }">
               <span class="q-text">{{ row.question || '（未找到原始提问）' }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="回答摘要" min-width="220">
+          <el-table-column label="原因" width="92">
             <template #default="{ row }">
-              <span class="a-text">{{ answerPlain(row.answer) }}</span>
+              <el-tag v-if="row.reason" :type="reasonTagType(row.reason)" size="small" effect="light">
+                {{ REASON_LABELS[row.reason] || row.reason }}
+              </el-tag>
+              <span v-else class="dim">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="时间" width="110">
+          <el-table-column label="引用文档" min-width="120">
+            <template #default="{ row }">
+              <span class="a-text">{{ (row.sourceDocs || []).join('、') || '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="84" align="center">
+            <template #default="{ row }">
+              <span v-if="row.reflowed" class="reflowed-ok">已回流 ✓</span>
+              <span v-else class="dim">未处理</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="时间" width="100">
             <template #default="{ row }">{{ formatDateTime(row.createdAt, 'MM-DD HH:mm') }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="90" align="center">
+          <el-table-column label="操作" width="140" align="center">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="goConversation(row)">
                 查看会话
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                size="small"
+                :disabled="row.reflowed"
+                @click="openReflow(row)"
+              >
+                转难例
               </el-button>
             </template>
           </el-table-column>
@@ -204,16 +227,73 @@
         <el-empty v-else description="暂无差评，继续保持" :image-size="64" />
       </div>
     </div>
+
+    <!-- 差评转难例对话框：回流为回归用例（isHard + source=hardcase） -->
+    <el-dialog v-model="reflowVisible" title="差评转难例" width="480px" append-to-body>
+      <el-form label-width="88px" label-position="left" size="small">
+        <el-form-item label="目标库">
+          <el-select v-model="reflowForm.kbId" filterable placeholder="选择知识库" style="width: 100%">
+            <el-option
+              v-for="kb in kbStore.options"
+              :key="kb.id"
+              :value="kb.id"
+              :label="kb.name"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="提问">
+          <el-input v-model="reflowForm.question" type="textarea" :rows="2" maxlength="512" />
+        </el-form-item>
+        <el-form-item label="文档包含">
+          <el-input
+            v-model="reflowForm.docNameContains"
+            maxlength="128"
+            placeholder="目标文档名包含（用于检索命中判定）"
+          />
+        </el-form-item>
+        <el-form-item label="命中关键词">
+          <el-select
+            v-model="reflowForm.keywords"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            :reserve-keyword="false"
+            placeholder="输入后回车创建"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="reflowForm.note" type="textarea" :rows="2" maxlength="2000" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button size="small" @click="reflowVisible = false">取消</el-button>
+        <el-button
+          size="small"
+          type="primary"
+          :loading="reflowSubmitting"
+          :disabled="!reflowForm.kbId || !reflowForm.question.trim()"
+          @click="submitReflow"
+        >
+          创建回归用例
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { getCostAnalytics, getFeedbackAnalytics } from '@/api/user'
+import { createEvalCase } from '@/api/knowledge'
+import { useKnowledgeStore } from '@/store/knowledge'
 import { formatNumber, formatDateTime } from '@/utils/format'
 
 const router = useRouter()
+const kbStore = useKnowledgeStore()
 
 /** 模型单价表（元 / 百万 tokens：[输入, 输出]）。公开定价近似值，可按最新价目调整 */
 const MODEL_PRICES = {
@@ -349,6 +429,78 @@ function answerPlain(md = '') {
 
 function goConversation(row) {
   router.push(`/chat/${row.conversationId}`)
+}
+
+/* ---------- 差评回流（v0.9.39）：差评 → 难例回归用例 ---------- */
+
+/** 点踩原因中文映射（与后端枚举一致） */
+const REASON_LABELS = {
+  offtopic: '答非所问',
+  citation: '引用错误',
+  outdated: '内容过时',
+  other: '其他'
+}
+
+function reasonTagType(reason) {
+  return { citation: 'danger', offtopic: 'warning', outdated: 'warning' }[reason] || 'info'
+}
+
+const reflowVisible = ref(false)
+const reflowSubmitting = ref(false)
+const reflowForm = reactive({
+  kbId: '',
+  question: '',
+  docNameContains: '',
+  keywords: [],
+  note: ''
+})
+
+/** 从提问粗提候选关键词（评测 fallback 命中用，可编辑） */
+function guessKeywords(q = '') {
+  const parts = q
+    .replace(/[?？!！。.,，、；;：:"'「」『』（）()~*《》]/g, ' ')
+    .replace(/是什么|怎么样|怎么|如何|为什么|哪些|什么|请问|帮我|一下|谢谢|吗|呢/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 2)
+  return [...new Set(parts)].slice(0, 3)
+}
+
+async function openReflow(row) {
+  reflowForm.kbId = row.refKbId || ''
+  reflowForm.question = row.question || ''
+  reflowForm.docNameContains = (row.sourceDocs || [])[0] || ''
+  reflowForm.keywords = guessKeywords(row.question || '')
+  reflowForm.note = `差评回流 · @${row.username || '未知用户'} · 原因：${
+    REASON_LABELS[row.reason] || row.reason || '未标注'
+  }${row.note ? ` · 备注：${row.note}` : ''}`
+  reflowVisible.value = true
+
+  // 库下拉兜底：默认 refKbId，若不在就绪列表（如库被删）回落到第一个可用库
+  if (!kbStore.options.length) {
+    await kbStore.fetchOptions().catch(() => {})
+  }
+  if (reflowForm.kbId && !kbStore.options.some((k) => k.id === reflowForm.kbId)) {
+    reflowForm.kbId = kbStore.options[0]?.id || ''
+  }
+}
+
+async function submitReflow() {
+  reflowSubmitting.value = true
+  try {
+    await createEvalCase(reflowForm.kbId, {
+      question: reflowForm.question.trim(),
+      docNameContains: reflowForm.docNameContains.trim(),
+      keywords: reflowForm.keywords,
+      note: reflowForm.note,
+      isHard: true,
+      source: 'hardcase'
+    })
+    ElMessage.success('已创建难例回归用例')
+    reflowVisible.value = false
+    await loadAll() // 刷新明细，状态列更新为「已回流」
+  } finally {
+    reflowSubmitting.value = false
+  }
 }
 
 async function loadAll() {
@@ -587,6 +739,16 @@ onMounted(loadAll)
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-all;
+}
+
+.dim {
+  font-size: 12px;
+  color: var(--c-text-4);
+}
+
+.reflowed-ok {
+  font-size: 12px;
+  color: #16a34a;
 }
 
 @media (max-width: 900px) {

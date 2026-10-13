@@ -308,10 +308,14 @@ export function streamAnswer(payload, handlers = {}) {
    其他
    ========================================================================== */
 
-/** 消息反馈（点赞/点踩） */
-export function submitFeedback(messageId, type) {
+/** 消息反馈（点赞/点踩）：点踩可携带原因标签与备注（v0.9.39） */
+export function submitFeedback(messageId, type, reason, note) {
   if (USE_MOCK) return mockOk({ id: messageId, feedback: type }, 120)
-  return request({ url: `/v1/messages/${messageId}/feedback`, method: 'post', data: { type } })
+  return request({
+    url: `/v1/messages/${messageId}/feedback`,
+    method: 'post',
+    data: { type, reason, note }
+  })
 }
 
 /** 首页推荐问题 */

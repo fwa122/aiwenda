@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { genId } from '../common/id.util';
 import { SessionUser } from '../common/kb-access';
 import { PrismaService } from '../prisma/prisma.service';
@@ -46,16 +47,25 @@ export class KbMemberService {
       where: { kbId_userId: { kbId, userId: target.id } },
     });
     if (existed) throw new BadRequestException('该用户已是知识库成员');
-    const [member] = await this.prisma.$transaction([
-      this.prisma.kbMember.create({
-        data: { id: genId('kbm'), kbId, userId: target.id, role: dto.role },
-      }),
-      // memberCount = owner(1) + 成员数，增删成员时同步维护
-      this.prisma.knowledgeBase.update({
-        where: { id: kbId },
-        data: { memberCount: { increment: 1 } },
-      }),
-    ]);
+    let member;
+    try {
+      [member] = await this.prisma.$transaction([
+        this.prisma.kbMember.create({
+          data: { id: genId('kbm'), kbId, userId: target.id, role: dto.role },
+        }),
+        // memberCount = owner(1) + 成员数，增删成员时同步维护（create 失败则整体回滚，不会误增）
+        this.prisma.knowledgeBase.update({
+          where: { id: kbId },
+          data: { memberCount: { increment: 1 } },
+        }),
+      ]);
+    } catch (e) {
+      // 并发窗口兜底：查重通过后另一请求抢先插入会触发唯一约束，映射为 400 而非 500
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new BadRequestException('该用户已是知识库成员');
+      }
+      throw e;
+    }
     return {
       id: member.id,
       kbId: member.kbId,

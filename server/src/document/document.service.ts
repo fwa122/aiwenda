@@ -59,9 +59,14 @@ export class DocumentService {
    * 文档作为子资源，权限完全由父知识库决定。
    */
   async assertKb(kbId: string, user: SessionUser, need: 'read' | 'write' = 'read') {
-    const kb = await this.prisma.knowledgeBase.findUnique({ where: { id: kbId } });
+    const [kb, memberRole] = await Promise.all([
+      this.prisma.knowledgeBase.findUnique({ where: { id: kbId } }),
+      this.prisma.kbMember
+        .findUnique({ where: { kbId_userId: { kbId, userId: user.id } }, select: { role: true } })
+        .then((m) => m?.role ?? null),
+    ]);
     if (!kb) throw new NotFoundException('知识库不存在');
-    const ok = need === 'write' ? canWriteKb(kb, user) : canReadKb(kb, user);
+    const ok = need === 'write' ? canWriteKb(kb, user, memberRole) : canReadKb(kb, user, memberRole);
     if (!ok) throw new ForbiddenException('无权操作该知识库下的文档');
     return kb;
   }
@@ -226,8 +231,16 @@ export class DocumentService {
   async chunks(docId: string, user: SessionUser) {
     const doc = await this.prisma.document.findUnique({ where: { id: docId } });
     if (!doc) throw new NotFoundException('文档不存在');
-    const kb = await this.prisma.knowledgeBase.findUnique({ where: { id: doc.kbId } });
-    if (!kb || !canReadKb(kb, user)) throw new ForbiddenException('无权访问该文档');
+    const [kb, memberRole] = await Promise.all([
+      this.prisma.knowledgeBase.findUnique({ where: { id: doc.kbId } }),
+      this.prisma.kbMember
+        .findUnique({
+          where: { kbId_userId: { kbId: doc.kbId, userId: user.id } },
+          select: { role: true },
+        })
+        .then((m) => m?.role ?? null),
+    ]);
+    if (!kb || !canReadKb(kb, user, memberRole)) throw new ForbiddenException('无权访问该文档');
     return this.prisma.chunk.findMany({
       where: { docId },
       orderBy: { chunkIndex: 'asc' },

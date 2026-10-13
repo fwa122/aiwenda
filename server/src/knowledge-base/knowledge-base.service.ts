@@ -50,10 +50,34 @@ export class KnowledgeBaseService {
     };
   }
 
-  /** 列表/下拉可见性过滤：admin 全可见；普通用户可见 internal/public + 自己的 private */
+  /** 列表/下拉可见性过滤：admin 全可见；普通用户可见 internal/public + 自己的 private + 自己所在的成员库 */
   private visibilityFilter(user: SessionUser): Prisma.KnowledgeBaseWhereInput {
     if (user.role === 'admin') return {};
-    return { OR: [{ userId: user.id }, { visibility: { not: 'private' } }] };
+    return {
+      OR: [
+        { userId: user.id },
+        { visibility: { not: 'private' } },
+        { members: { some: { userId: user.id } } },
+      ],
+    };
+  }
+
+  /** 当前用户在某库的成员角色（非成员为 null），实时查库——移除后权限立即失效 */
+  private memberRoleOf(kbId: string, userId: string) {
+    return this.prisma.kbMember
+      .findUnique({ where: { kbId_userId: { kbId, userId } }, select: { role: true } })
+      .then((m) => m?.role ?? null);
+  }
+
+  /** 计算协作角色标注（供前端写入口门控）：admin / owner / editor / viewer / null */
+  private resolveMyRole(
+    kb: { userId: string | null },
+    user: SessionUser,
+    memberRole: string | null
+  ): string | null {
+    if (user.role === 'admin') return 'admin';
+    if (kb.userId === user.id) return 'owner';
+    return memberRole;
   }
 
   async list(query: { keyword?: string; status?: string; page?: number; pageSize?: number }, user: SessionUser) {
@@ -82,7 +106,25 @@ export class KnowledgeBaseService {
       this.prisma.knowledgeBase.count({ where }),
     ]);
 
-    return { list, total, page, pageSize };
+    // 批量取当前用户在页内各库的成员角色（防 N+1），标注 myRole 供前端写入口判断
+    let roleMap = new Map<string, string>();
+    if (user.role !== 'admin' && list.length) {
+      const memberships = await this.prisma.kbMember.findMany({
+        where: { kbId: { in: list.map((k) => k.id) }, userId: user.id },
+        select: { kbId: true, role: true },
+      });
+      roleMap = new Map(memberships.map((m) => [m.kbId, m.role]));
+    }
+
+    return {
+      list: list.map((kb) => ({
+        ...kb,
+        myRole: this.resolveMyRole(kb, user, roleMap.get(kb.id) ?? null),
+      })),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   /** 已就绪知识库（供问答页下拉选择） */
@@ -102,15 +144,18 @@ export class KnowledgeBaseService {
   }
 
   async detail(id: string, user: SessionUser) {
-    const kb = await this.prisma.knowledgeBase.findUnique({ where: { id } });
+    const [kb, memberRole] = await Promise.all([
+      this.prisma.knowledgeBase.findUnique({ where: { id } }),
+      this.memberRoleOf(id, user.id),
+    ]);
     if (!kb) throw new NotFoundException('知识库不存在');
-    if (!canReadKb(kb, user)) throw new ForbiddenException('无权访问该知识库');
-    return kb;
+    if (!canReadKb(kb, user, memberRole)) throw new ForbiddenException('无权访问该知识库');
+    return { ...kb, myRole: this.resolveMyRole(kb, user, memberRole) };
   }
 
   async create(dto: CreateKbDto, user: SessionUser) {
     const config = this.buildConfig(dto);
-    return this.prisma.knowledgeBase.create({
+    const kb = await this.prisma.knowledgeBase.create({
       data: {
         id: genId('kb'),
         name: dto.name,
@@ -130,18 +175,22 @@ export class KnowledgeBaseService {
         ...config,
       } as Prisma.KnowledgeBaseUncheckedCreateInput,
     });
+    return { ...kb, myRole: this.resolveMyRole(kb, user, null) };
   }
 
-  /** 写操作归属校验：不存在 → 404；无写权限 → 403 */
+  /** 写操作归属校验：不存在 → 404；无写权限 → 403。返回库与当前用户成员角色供后续复用 */
   private async assertWritable(id: string, user: SessionUser) {
-    const kb = await this.prisma.knowledgeBase.findUnique({ where: { id } });
+    const [kb, memberRole] = await Promise.all([
+      this.prisma.knowledgeBase.findUnique({ where: { id } }),
+      this.memberRoleOf(id, user.id),
+    ]);
     if (!kb) throw new NotFoundException('知识库不存在');
-    if (!canWriteKb(kb, user)) throw new ForbiddenException('无权操作该知识库');
-    return kb;
+    if (!canWriteKb(kb, user, memberRole)) throw new ForbiddenException('无权操作该知识库');
+    return { kb, memberRole };
   }
 
   async update(id: string, dto: UpdateKbDto, user: SessionUser) {
-    const existing = await this.assertWritable(id, user);
+    const { kb: existing, memberRole } = await this.assertWritable(id, user);
 
     const config = this.buildConfig(dto, {
       retrieverConfig: existing.retrieverConfig,
@@ -163,11 +212,13 @@ export class KnowledgeBaseService {
     data.retrieverConfig = config.retrieverConfig;
     data.llmConfig = config.llmConfig;
 
-    return this.prisma.knowledgeBase.update({ where: { id }, data });
+    return this.prisma.knowledgeBase
+      .update({ where: { id }, data })
+      .then((kb) => ({ ...kb, myRole: this.resolveMyRole(kb, user, memberRole) }));
   }
 
   async remove(id: string, user: SessionUser) {
-    const existing = await this.assertWritable(id, user);
+    const { kb: existing } = await this.assertWritable(id, user);
     await this.prisma.knowledgeBase.delete({ where: { id } });
     return { id, name: existing.name };
   }

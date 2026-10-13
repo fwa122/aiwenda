@@ -18,8 +18,10 @@ import { AiServiceClient } from '../integrations/ai-service.client';
 import { EmbeddingStateService } from '../settings/embedding-state.service';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { EvalCaseService } from './eval-case.service';
+import { KbMemberService } from './kb-member.service';
 import { CreateKbDto, UpdateKbDto } from './dto/knowledge-base.dto';
 import { CreateEvalCaseDto, ImportEvalCasesDto, UpdateEvalCaseDto } from './dto/eval-case.dto';
+import { AddMemberDto, UpdateMemberDto } from './dto/kb-member.dto';
 
 @Controller('knowledge')
 @UseGuards(JwtAuthGuard)
@@ -27,6 +29,7 @@ export class KnowledgeBaseController {
   constructor(
     private readonly service: KnowledgeBaseService,
     private readonly evalCases: EvalCaseService,
+    private readonly members: KbMemberService,
     private readonly log: OperationLogService,
     private readonly ai: AiServiceClient,
     private readonly embeddingState: EmbeddingStateService
@@ -155,5 +158,74 @@ export class KnowledgeBaseController {
     @CurrentUser() user: any
   ) {
     return this.evalCases.remove(id, caseId, user);
+  }
+
+  // ==========================================================================
+  // 知识库成员管理（协作授权）
+  // 管理口径：仅 owner / admin 可增删改成员（editor 可写内容但无权管理成员）；
+  // 读口径：private 库成员可见（kb-access），成员角色实时查库，移除即失效
+  // ==========================================================================
+
+  @Get(':id/members')
+  listMembers(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.members.list(id, user);
+  }
+
+  /** 邀请下拉候选用户（排除 owner 与已有成员） */
+  @Get(':id/member-candidates')
+  memberCandidates(
+    @Param('id') id: string,
+    @Query('keyword') keyword: string,
+    @CurrentUser() user: any
+  ) {
+    return this.members.candidates(id, keyword, user);
+  }
+
+  @Post(':id/members')
+  addMember(
+    @Param('id') id: string,
+    @Body() dto: AddMemberDto,
+    @CurrentUser() user: any,
+    @Ip() ip: string
+  ) {
+    const result = this.members.add(id, dto, user);
+    result
+      .then((m) => {
+        this.log.record({
+          userId: user.id,
+          userName: user.username,
+          action: '添加知识库成员',
+          target: `${m.user.nickname || m.user.username}（${m.role}）`,
+          ip,
+        });
+      })
+      .catch(() => {});
+    return result;
+  }
+
+  @Put(':id/members/:memberId')
+  updateMember(
+    @Param('id') id: string,
+    @Param('memberId') memberId: string,
+    @Body() dto: UpdateMemberDto,
+    @CurrentUser() user: any
+  ) {
+    return this.members.update(id, memberId, dto, user);
+  }
+
+  @Delete(':id/members/:memberId')
+  removeMember(
+    @Param('id') id: string,
+    @Param('memberId') memberId: string,
+    @CurrentUser() user: any,
+    @Ip() ip: string
+  ) {
+    const result = this.members.remove(id, memberId, user);
+    result
+      .then(() => {
+        this.log.record({ userId: user.id, userName: user.username, action: '移除知识库成员', target: memberId, ip });
+      })
+      .catch(() => {});
+    return result;
   }
 }

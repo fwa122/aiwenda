@@ -260,6 +260,75 @@
                 <span class="form-hint">{{ configForm.temperature.toFixed(1) }}</span>
               </el-form-item>
 
+              <!-- 成员管理（仅 owner / admin）：editor 可写内容但无权管理成员 -->
+              <template v-if="canManage">
+                <el-divider content-position="left">成员管理</el-divider>
+                <el-form-item label="邀请成员">
+                  <el-select
+                    v-model="inviteUsername"
+                    filterable
+                    remote
+                    clearable
+                    :remote-method="searchCandidates"
+                    :loading="candidatesLoading"
+                    placeholder="搜索用户名 / 昵称"
+                    style="width: 240px"
+                  >
+                    <el-option
+                      v-for="u in candidates"
+                      :key="u.id"
+                      :label="`${u.nickname || u.username}（${u.username}）`"
+                      :value="u.username"
+                    />
+                  </el-select>
+                  <el-select v-model="inviteRole" style="width: 110px; margin-left: 8px">
+                    <el-option label="可编辑" value="editor" />
+                    <el-option label="仅查看" value="viewer" />
+                  </el-select>
+                  <el-button type="primary" plain style="margin-left: 8px" :loading="inviting" @click="handleInvite">
+                    邀请
+                  </el-button>
+                  <span class="form-hint">可编辑：可上传文档 / 改配置；仅查看：只能检索与问答</span>
+                </el-form-item>
+                <el-form-item label="成员列表">
+                  <el-table :data="memberRows" size="small" style="width: 620px" empty-text="暂无协作者，邀请成员共同维护知识库">
+                    <el-table-column label="成员" min-width="150">
+                      <template #default="{ row }">
+                        <div class="member-cell">
+                          <span class="member-name">{{ row.user.nickname || row.user.username }}</span>
+                          <span class="member-sub">@{{ row.user.username }}</span>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="部门" width="110">
+                      <template #default="{ row }">{{ row.user.department || '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="角色" width="120">
+                      <template #default="{ row }">
+                        <el-tag v-if="row.isOwner" size="small" type="warning" effect="light">所有者</el-tag>
+                        <el-select v-else :model-value="row.role" size="small" @change="(v) => handleRoleChange(row, v)">
+                          <el-option label="可编辑" value="editor" />
+                          <el-option label="仅查看" value="viewer" />
+                        </el-select>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="加入时间" width="100">
+                      <template #default="{ row }">
+                        <span v-if="row.createdAt">{{ fromNow(row.createdAt) }}</span>
+                        <span v-else>-</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="70">
+                      <template #default="{ row }">
+                        <el-button v-if="!row.isOwner" link type="danger" size="small" @click="handleRemoveMember(row)">
+                          移除
+                        </el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </el-form-item>
+              </template>
+
               <el-form-item v-if="canWrite">
                 <el-button type="primary" :loading="saving" @click="handleSaveConfig">保存配置</el-button>
                 <el-button @click="resetConfigForm">重置</el-button>
@@ -446,8 +515,19 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useKnowledgeStore, useUserStore } from '@/store'
-import { canWriteKb } from '@/utils/kb-access'
-import { retrievalTest, getDocumentChunks, downloadDocument, getEvalCases, updateEvalCase } from '@/api/knowledge'
+import { canWriteKb, canManageMembers } from '@/utils/kb-access'
+import {
+  retrievalTest,
+  getDocumentChunks,
+  downloadDocument,
+  getEvalCases,
+  updateEvalCase,
+  getKbMembers,
+  getKbMemberCandidates,
+  addKbMember,
+  updateKbMember,
+  removeKbMember
+} from '@/api/knowledge'
 import { watchKb, stopWatch } from '@/composables/useParseWatcher'
 import { getUsageStats } from '@/api/user'
 import { kbStatusMap, docStatusMap, embeddingModels, parserOptions, llmModels } from '@/mock/knowledge'
@@ -462,8 +542,10 @@ const userStore = useUserStore()
 
 const activeTab = ref('docs')
 const kb = computed(() => knowledgeStore.current)
-/** 写权限门控（与后端 kb-access 口径一致）：非 owner 隐藏写操作入口，避免点击后 403 */
+/** 写权限门控（与后端 kb-access 口径一致）：非 owner/editor 隐藏写操作入口，避免点击后 403 */
 const canWrite = computed(() => canWriteKb(kb.value, userStore.profile))
+/** 成员管理门控（与后端 KbMemberService 口径一致）：仅 owner / admin */
+const canManage = computed(() => canManageMembers(kb.value, userStore.profile))
 
 /* ---------------- 文档 ---------------- */
 const docKeyword = ref('')
@@ -649,6 +731,11 @@ async function fetchEvalCases() {
 
 watch(activeTab, (t) => {
   if (t === 'eval' && !evalCases.value.length) fetchEvalCases()
+  // 成员面板懒加载：进入配置 tab 时拉取成员与候选用户
+  if (t === 'config' && canManage.value && !members.value.length) {
+    fetchMembers()
+    searchCandidates('')
+  }
 })
 
 const evalRunning = ref(false)
@@ -947,6 +1034,89 @@ async function handleRebuild() {
   await knowledgeStore.fetchDetail(route.params.id)
 }
 
+/* ---------------- 成员管理（owner / admin） ---------------- */
+const members = ref([])
+const candidates = ref([])
+const candidatesLoading = ref(false)
+const inviteUsername = ref('')
+const inviteRole = ref('editor')
+const inviting = ref(false)
+
+/** 展示行：所有者固定首行（不可改角色/移除）+ 成员表 */
+const memberRows = computed(() => {
+  if (!kb.value) return []
+  const ownerRow = {
+    id: '__owner__',
+    isOwner: true,
+    role: 'owner',
+    createdAt: null,
+    user: { id: kb.value.userId, username: kb.value.owner || '', nickname: '', department: '' }
+  }
+  return [ownerRow, ...members.value]
+})
+
+async function fetchMembers() {
+  try {
+    const data = await getKbMembers(route.params.id)
+    members.value = data.list || []
+  } catch {
+    /* 非 owner/admin 无权读取，面板不展示即可 */
+  }
+}
+
+async function searchCandidates(kw) {
+  candidatesLoading.value = true
+  try {
+    candidates.value = await getKbMemberCandidates(route.params.id, kw || '')
+  } finally {
+    candidatesLoading.value = false
+  }
+}
+
+async function handleInvite() {
+  if (!inviteUsername.value) {
+    ElMessage.warning('请先搜索并选择要邀请的用户')
+    return
+  }
+  inviting.value = true
+  try {
+    await addKbMember(route.params.id, { username: inviteUsername.value, role: inviteRole.value })
+    ElMessage.success('已添加成员')
+    inviteUsername.value = ''
+    candidates.value = []
+    await fetchMembers()
+  } catch (e) {
+    ElMessage.error(e.message || '邀请失败')
+  } finally {
+    inviting.value = false
+  }
+}
+
+async function handleRoleChange(row, role) {
+  try {
+    await updateKbMember(route.params.id, row.id, { role })
+    row.role = role
+    ElMessage.success(role === 'editor' ? '已授权为可编辑' : '已调整为仅查看')
+  } catch (e) {
+    ElMessage.error(e.message || '调整失败')
+  }
+}
+
+async function handleRemoveMember(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定移除成员「${row.user.nickname || row.user.username}」吗？其编辑权限将立即失效。`,
+      '移除成员',
+      { type: 'warning', confirmButtonText: '移除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
+    await removeKbMember(route.params.id, row.id)
+    ElMessage.success('已移除')
+    await fetchMembers()
+  } catch (e) {
+    /* 取消 */
+  }
+}
+
 /* ---------------- 统计 ---------------- */
 const usage = ref(null)
 const maxQuestions = computed(() =>
@@ -1242,6 +1412,22 @@ onMounted(async () => {
 .form-hint {
   margin-left: 12px;
   font-size: 12px;
+  color: var(--c-text-4);
+}
+
+/* 成员管理 */
+.member-cell {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.4;
+}
+
+.member-name {
+  font-size: 13px;
+}
+
+.member-sub {
+  font-size: 11.5px;
   color: var(--c-text-4);
 }
 

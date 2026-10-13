@@ -103,6 +103,10 @@
               <span class="m-value">{{ formatSize(kb.totalSize) }}</span>
               <span class="m-label">容量</span>
             </div>
+            <div class="metric">
+              <span class="m-value">{{ kb.memberCount ?? 1 }}</span>
+              <span class="m-label">成员</span>
+            </div>
           </div>
 
           <footer class="kb-foot">

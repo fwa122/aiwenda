@@ -29,19 +29,25 @@ export class SearchService {
     });
 
     // 2. 文档名匹配：先按 kb-access 可见性取当前用户可见的 kbId 列表
-    //    （internal/public 对所有登录用户可见，private 仅 owner 与 admin，与 document.service 口径一致）
-    const [user, allKbs] = await Promise.all([
+    //    （internal/public 对所有登录用户可见，private 仅 owner、admin 与成员，与 document.service 口径一致）
+    const [user, allKbs, memberships] = await Promise.all([
       this.prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
       this.prisma.knowledgeBase.findMany({
         select: { id: true, userId: true, visibility: true },
       }),
+      this.prisma.kbMember.findMany({ where: { userId }, select: { kbId: true, role: true } }),
     ]);
+    const roleMap = new Map(memberships.map((m) => [m.kbId, m.role]));
     const visibleKbIds =
       user?.role === 'admin'
         ? allKbs.map((kb) => kb.id)
         : allKbs
             .filter((kb) =>
-              canReadKb(kb, { id: userId, username: '', role: user?.role || 'viewer' }),
+              canReadKb(
+                kb,
+                { id: userId, username: '', role: user?.role || 'viewer' },
+                roleMap.get(kb.id) ?? null,
+              ),
             )
             .map((kb) => kb.id);
 

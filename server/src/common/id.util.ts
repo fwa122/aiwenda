@@ -11,6 +11,7 @@ const PREFIX: Record<string, string> = {
   att: 'att',
   fav: 'fav',
   evc: 'evc',
+  kbm: 'kbm',
 };
 
 /**

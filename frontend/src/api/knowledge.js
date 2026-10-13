@@ -414,6 +414,102 @@ export function importEvalCases(kbId, cases) {
 }
 
 /* ==========================================================================
+   知识库成员管理（协作授权，owner / admin）
+   ========================================================================== */
+
+/** mock 存储：按知识库隔离的内存成员表 */
+const mockKbMembers = new Map()
+
+function mockMemberList(kbId) {
+  if (!mockKbMembers.has(kbId)) mockKbMembers.set(kbId, [])
+  return mockKbMembers.get(kbId)
+}
+
+function mockMemberRow(memberId, user, role) {
+  return {
+    id: memberId,
+    role,
+    createdAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    user: { id: user.id, username: user.username, nickname: user.nickname, department: user.department }
+  }
+}
+
+/** 成员列表（owner / admin） */
+export function getKbMembers(kbId) {
+  if (USE_MOCK) {
+    return mockOk({ list: clone(mockMemberList(kbId)), total: mockMemberList(kbId).length }, 160)
+  }
+  return request({ url: `/v1/knowledge/${kbId}/members`, method: 'get' })
+}
+
+/** 邀请下拉候选用户（已排除 owner 与现有成员） */
+export function getKbMemberCandidates(kbId, keyword = '') {
+  if (USE_MOCK) {
+    const exists = new Set(mockMemberList(kbId).map((m) => m.user.id))
+    const kw = keyword.trim().toLowerCase()
+    const list = mockDb.users
+      .filter((u) => u.status === 'active' && !exists.has(u.id))
+      .filter(
+        (u) =>
+          !kw ||
+          u.username.toLowerCase().includes(kw) ||
+          (u.nickname || '').toLowerCase().includes(kw)
+      )
+      .slice(0, 20)
+      .map((u) => ({ id: u.id, username: u.username, nickname: u.nickname, department: u.department }))
+    return mockOk(list, 200)
+  }
+  return request({
+    url: `/v1/knowledge/${kbId}/member-candidates`,
+    method: 'get',
+    params: keyword ? { keyword } : {}
+  })
+}
+
+/** 邀请成员（按用户名） */
+export function addKbMember(kbId, payload) {
+  if (USE_MOCK) {
+    const list = mockMemberList(kbId)
+    const user = mockDb.users.find((u) => u.username === payload.username)
+    if (!user) return Promise.reject(new Error('用户不存在'))
+    if (list.some((m) => m.user.id === user.id)) {
+      return Promise.reject(new Error('该用户已是知识库成员'))
+    }
+    const row = mockMemberRow(uid('kbm'), user, payload.role || 'viewer')
+    list.push(row)
+    return mockOk(clone(row), 240)
+  }
+  return request({ url: `/v1/knowledge/${kbId}/members`, method: 'post', data: payload })
+}
+
+/** 调整成员角色 */
+export function updateKbMember(kbId, memberId, payload) {
+  if (USE_MOCK) {
+    const item = mockMemberList(kbId).find((m) => m.id === memberId)
+    if (!item) return Promise.reject(new Error('成员不存在'))
+    item.role = payload.role
+    return mockOk(clone(item), 220)
+  }
+  return request({
+    url: `/v1/knowledge/${kbId}/members/${memberId}`,
+    method: 'put',
+    data: payload
+  })
+}
+
+/** 移除成员（写权限实时失效） */
+export function removeKbMember(kbId, memberId) {
+  if (USE_MOCK) {
+    const list = mockMemberList(kbId)
+    const idx = list.findIndex((m) => m.id === memberId)
+    if (idx === -1) return Promise.reject(new Error('成员不存在'))
+    list.splice(idx, 1)
+    return mockOk({ id: memberId }, 220)
+  }
+  return request({ url: `/v1/knowledge/${kbId}/members/${memberId}`, method: 'delete' })
+}
+
+/* ==========================================================================
    文档原始文件：预览 / 下载
    ========================================================================== */
 

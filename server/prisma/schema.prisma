@@ -54,6 +54,7 @@ model User {
   apiKeys       ApiKey[]
   operationLogs OperationLog[]
   knowledgeBases KnowledgeBase[]
+  kbMembers     KbMember[]
 
   @@index([role])
   @@map("users")
@@ -101,11 +102,34 @@ model KnowledgeBase {
   documents Document[]
   chunks    Chunk[]
   evalCases EvalCase[]
+  members   KbMember[]
 
   @@index([status])
   @@index([userId])
   @@index([updatedAt])
   @@map("knowledge_bases")
+}
+
+// ============================================================================
+// 知识库成员（协作授权）
+// owner 不入成员表（归属即权限）；editor 可写内容，viewer 仅可读。
+// (kbId, userId) 唯一防止重复邀请；知识库/用户删除时级联清理；
+// 权限判定实时查本表，成员被移除后写权限立即失效。
+// ============================================================================
+model KbMember {
+  id        String   @id // kbm_xxx
+  kbId      String   @map("kb_id")
+  userId    String   @map("user_id")
+  role      String   @default("viewer") @db.VarChar(16) // editor | viewer
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([kbId, userId])
+  @@index([userId])
+  @@map("kb_members")
 }
 
 // ============================================================================

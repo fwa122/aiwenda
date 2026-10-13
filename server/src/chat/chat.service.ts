@@ -518,19 +518,27 @@ export class ChatService {
     }
   }
 
-  /** 防越权：只保留当前用户可见（internal/public 或自己的 private）的知识库 */
+  /** 防越权：只保留当前用户可见（internal/public、自己的 private 或所在成员库）的知识库 */
   private async filterVisibleKbs(kbIds: string[], userId: string): Promise<string[]> {
     if (!kbIds.length) return kbIds;
-    const [user, kbs] = await Promise.all([
+    const [user, kbs, memberships] = await Promise.all([
       this.prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
       this.prisma.knowledgeBase.findMany({
         where: { id: { in: kbIds } },
         select: { id: true, userId: true, visibility: true },
       }),
+      // 成员库对 private 可见，与 kb-access 读口径一致
+      this.prisma.kbMember.findMany({
+        where: { kbId: { in: kbIds }, userId },
+        select: { kbId: true, role: true },
+      }),
     ]);
     if (user?.role === 'admin') return kbIds;
+    const roleMap = new Map(memberships.map((m) => [m.kbId, m.role]));
     return kbs
-      .filter((kb) => canReadKb(kb, { id: userId, username: '', role: user?.role || 'viewer' }))
+      .filter((kb) =>
+        canReadKb(kb, { id: userId, username: '', role: user?.role || 'viewer' }, roleMap.get(kb.id) ?? null),
+      )
       .map((kb) => kb.id);
   }
 

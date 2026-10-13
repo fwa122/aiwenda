@@ -27,18 +27,23 @@ function normalizeKeywords(keywords?: string[] | null): string[] {
 export class EvalCaseService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  /** 读权限：能访问知识库即可查看/运行评测（与检索测试口径一致） */
+  /** 读权限：能访问知识库即可查看/运行评测（与检索测试口径一致，private 库成员可见） */
   private async assertReadable(kbId: string, user: SessionUser) {
-    const kb = await this.prisma.knowledgeBase.findUnique({ where: { id: kbId } });
+    const [kb, memberRole] = await Promise.all([
+      this.prisma.knowledgeBase.findUnique({ where: { id: kbId } }),
+      this.prisma.kbMember
+        .findUnique({ where: { kbId_userId: { kbId, userId: user.id } }, select: { role: true } })
+        .then((m) => m?.role ?? null),
+    ]);
     if (!kb) throw new NotFoundException('知识库不存在');
-    if (!canReadKb(kb, user)) throw new ForbiddenException('无权访问该知识库');
-    return kb;
+    if (!canReadKb(kb, user, memberRole)) throw new ForbiddenException('无权访问该知识库');
+    return { kb, memberRole };
   }
 
-  /** 写权限：owner / admin（与知识库配置修改口径一致） */
+  /** 写权限：owner / admin / editor 成员（与知识库配置修改口径一致） */
   private async assertWritable(kbId: string, user: SessionUser) {
-    const kb = await this.assertReadable(kbId, user);
-    if (!canWriteKb(kb, user)) throw new ForbiddenException('无权操作该知识库');
+    const { kb, memberRole } = await this.assertReadable(kbId, user);
+    if (!canWriteKb(kb, user, memberRole)) throw new ForbiddenException('无权操作该知识库');
     return kb;
   }
 

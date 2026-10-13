@@ -278,6 +278,68 @@ export function getUsageStats() {
   return request({ url: '/v1/stats/usage', method: 'get' })
 }
 
+/** 成本分析：Token 按模型/按用户聚合 + 日趋势（仅 admin） */
+export function getCostAnalytics(days = 30) {
+  if (USE_MOCK) {
+    const models = [
+      { model: 'qwen3.8-max', count: 96, tokens: 184320, promptTokens: 151040, completionTokens: 33280, avgLatency: 4210 },
+      { model: 'qwen3.7-flash', count: 312, tokens: 121800, promptTokens: 98600, completionTokens: 23200, avgLatency: 1480 },
+      { model: 'glm-4-flash', count: 148, tokens: 96400, promptTokens: 74200, completionTokens: 22200, avgLatency: 1310 }
+    ]
+    return mockOk(
+      {
+        days,
+        byModel: models,
+        byUser: [
+          { id: 'u_admin', username: 'admin', nickname: '管理员', questions: 210, tokens: 198400 },
+          { id: 'u_demo', username: 'demo', nickname: '演示用户', questions: 346, tokens: 204120 }
+        ],
+        byDept: [
+          { department: '研发部', users: 3, questions: 320, tokens: 236100 },
+          { department: '市场部', users: 2, questions: 236, tokens: 166420 }
+        ],
+        trend: Array.from({ length: days }, (_, i) => ({
+          date: `10-${String(13 - ((days - 1 - i) % 28)).padStart(2, '0')}`,
+          questions: 20 + Math.round(Math.sin(i / 3) * 8 + 10),
+          tokens: 12000 + Math.round(Math.sin(i / 3) * 5000 + 8000)
+        })),
+        total: { questions: 556, tokens: 402520 }
+      },
+      220
+    )
+  }
+  return request({ url: '/v1/stats/cost', method: 'get', params: { days } })
+}
+
+/** 评价分析：点赞点踩汇总 + 日趋势 + 最近差评明细（仅 admin） */
+export function getFeedbackAnalytics(days = 30) {
+  if (USE_MOCK) {
+    return mockOk(
+      {
+        days,
+        summary: { total: 556, likes: 321, dislikes: 47, ratedRate: 0.662, satisfaction: 0.872 },
+        trend: Array.from({ length: days }, (_, i) => ({
+          date: `10-${String(13 - ((days - 1 - i) % 28)).padStart(2, '0')}`,
+          total: 18 + (i % 5),
+          likes: 11 + (i % 4),
+          dislikes: 1 + (i % 3)
+        })),
+        disliked: [
+          {
+            id: 'msg_demo1',
+            conversationId: 'conv_demo1',
+            createdAt: '2026-10-12T09:30:00.000Z',
+            question: '公司差旅报销的审批流程是什么？',
+            answer: '根据现有资料，差旅报销需提交至 OA 系统…（示例差评回答摘要）'
+          }
+        ]
+      },
+      220
+    )
+  }
+  return request({ url: '/v1/stats/feedback', method: 'get', params: { days } })
+}
+
 /** 操作日志 */
 export function getOperationLogs(params = {}) {
   const { page = 1, pageSize = 10 } = params

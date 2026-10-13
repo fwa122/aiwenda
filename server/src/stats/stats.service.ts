@@ -2,6 +2,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+/** 时间范围参数收敛到安全区间 */
+const clampDays = (days: number) =>
+  Number.isFinite(days) ? Math.min(Math.max(Math.trunc(days), 1), 365) : 30;
+
 @Injectable()
 export class StatsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -71,6 +75,168 @@ export class StatsService {
         docCount: kbAgg._sum.docCount || 0,
         chunkCount: kbAgg._sum.chunkCount || 0,
       },
+    };
+  }
+
+  /**
+   * 成本分析（仅 admin）：近 N 天 Token 消耗按模型/按用户聚合 + 日趋势。
+   * tokens 数据取自 messages.meta（每条回答落库时写入 model + tokens），
+   * 日趋势复用 daily_stats 日粒度表。
+   */
+  async cost(days: number) {
+    const range = clampDays(days);
+
+    const [byModel, byUser, byDept, trendRows, weekRows] = await Promise.all([
+      this.prisma.$queryRaw`
+        SELECT meta->>'model' AS model,
+               COUNT(*)::int AS count,
+               COALESCE(SUM((meta->'tokens'->>'total')::bigint), 0)::bigint AS tokens,
+               COALESCE(SUM((meta->'tokens'->>'prompt')::bigint), 0)::bigint AS "promptTokens",
+               COALESCE(SUM((meta->'tokens'->>'completion')::bigint), 0)::bigint AS "completionTokens",
+               ROUND(AVG((meta->>'elapsedMs')::float)::numeric)::int AS "avgLatency"
+        FROM messages
+        WHERE role = 'assistant' AND status = 'done'
+          AND meta->'tokens'->>'total' IS NOT NULL
+          AND created_at >= NOW() - make_interval(days => ${range}::int)
+        GROUP BY meta->>'model'
+        ORDER BY tokens DESC`,
+      this.prisma.$queryRaw`
+        SELECT u.id, u.username, u.nickname, u.department,
+               COUNT(m.id)::int AS questions,
+               COALESCE(SUM((m.meta->'tokens'->>'total')::bigint), 0)::bigint AS tokens
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        JOIN users u ON u.id = c.user_id
+        WHERE m.role = 'assistant' AND m.status = 'done'
+          AND m.meta->'tokens'->>'total' IS NOT NULL
+          AND m.created_at >= NOW() - make_interval(days => ${range}::int)
+        GROUP BY u.id, u.username, u.nickname
+        ORDER BY tokens DESC`,
+      // 部门维度：按 users.department 聚合（成本分摊到部门），空值归入「未设置」
+      this.prisma.$queryRaw`
+        SELECT COALESCE(NULLIF(u.department, ''), '未设置') AS department,
+               COUNT(DISTINCT u.id)::int AS users,
+               COUNT(m.id)::int AS questions,
+               COALESCE(SUM((m.meta->'tokens'->>'total')::bigint), 0)::bigint AS tokens
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        JOIN users u ON u.id = c.user_id
+        WHERE m.role = 'assistant' AND m.status = 'done'
+          AND m.meta->'tokens'->>'total' IS NOT NULL
+          AND m.created_at >= NOW() - make_interval(days => ${range}::int)
+        GROUP BY 1
+        ORDER BY tokens DESC`,
+      this.prisma.$queryRaw`
+        SELECT date::text AS date, questions, tokens::bigint AS tokens
+        FROM daily_stats
+        WHERE date >= (CURRENT_DATE - make_interval(days => ${range - 1}::int))::date
+        ORDER BY date ASC`,
+      this.prisma.dailyStat.aggregate({
+        _sum: { questions: true, tokens: true },
+      }),
+    ]);
+
+    const trend = (trendRows as Array<{ date: string; questions: number; tokens: bigint }>).map(
+      (r) => ({
+        date: r.date.slice(5, 10), // MM-DD
+        questions: Number(r.questions),
+        tokens: Number(r.tokens),
+      }),
+    );
+
+    return {
+      days: range,
+      byModel: (byModel as Array<Record<string, unknown>>).map((r) => ({
+        ...r,
+        tokens: Number(r.tokens),
+        promptTokens: Number(r.promptTokens),
+        completionTokens: Number(r.completionTokens),
+      })),
+      byUser: (byUser as Array<Record<string, unknown>>).map((r) => ({
+        ...r,
+        tokens: Number(r.tokens),
+      })),
+      byDept: (byDept as Array<Record<string, unknown>>).map((r) => ({
+        ...r,
+        tokens: Number(r.tokens),
+      })),
+      trend,
+      total: {
+        questions: Number(weekRows._sum.questions || 0),
+        tokens: Number(weekRows._sum.tokens || 0),
+      },
+    };
+  }
+
+  /**
+   * 评价分析（仅 admin）：点赞/点踩汇总 + 日趋势 + 最近差评明细（含原始提问）。
+   * 差评明细用于答案质量闭环：定位差评对应的提问，指导知识库补漏。
+   */
+  async feedback(days: number) {
+    const range = clampDays(days);
+
+    const [summaryRows, trendRows, disliked] = await Promise.all([
+      this.prisma.$queryRaw`
+        SELECT COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE feedback = 'like')::int AS likes,
+               COUNT(*) FILTER (WHERE feedback = 'dislike')::int AS dislikes
+        FROM messages
+        WHERE role = 'assistant' AND status = 'done'
+          AND created_at >= NOW() - make_interval(days => ${range}::int)`,
+      this.prisma.$queryRaw`
+        SELECT created_at::date::text AS date,
+               COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE feedback = 'like')::int AS likes,
+               COUNT(*) FILTER (WHERE feedback = 'dislike')::int AS dislikes
+        FROM messages
+        WHERE role = 'assistant' AND status = 'done'
+          AND created_at >= NOW() - make_interval(days => ${range}::int)
+        GROUP BY 1 ORDER BY 1 ASC`,
+      this.prisma.$queryRaw`
+        SELECT m.id,
+               m.conversation_id AS "conversationId",
+               m.created_at AS "createdAt",
+               LEFT(m.content, 200) AS answer,
+               LEFT((
+                 SELECT q.content FROM messages q
+                 WHERE q.conversation_id = m.conversation_id
+                   AND q.role = 'user' AND q.created_at <= m.created_at
+                 ORDER BY q.created_at DESC LIMIT 1
+               ), 200) AS question
+        FROM messages m
+        WHERE m.role = 'assistant' AND m.feedback = 'dislike'
+        ORDER BY m.created_at DESC
+        LIMIT 20`,
+    ]);
+
+    const summary = (summaryRows as Array<{ total: number; likes: number; dislikes: number }>)[0] || {
+      total: 0,
+      likes: 0,
+      dislikes: 0,
+    };
+    const rated = summary.likes + summary.dislikes;
+
+    return {
+      days: range,
+      summary: {
+        total: Number(summary.total),
+        likes: Number(summary.likes),
+        dislikes: Number(summary.dislikes),
+        // 评价率 = 已评价数 / 回答总数；满意度 = 点赞 / 已评价数
+        ratedRate: summary.total > 0 ? Number((rated / summary.total).toFixed(4)) : 0,
+        satisfaction: rated > 0 ? Number((summary.likes / rated).toFixed(4)) : 0,
+      },
+      // 日期统一为 MM-DD，与 /stats/cost、/stats/usage 的趋势口径一致
+      trend: (trendRows as Array<{ date: string; total: number; likes: number; dislikes: number }>).map(
+        (r) => ({ ...r, date: r.date.slice(5, 10) }),
+      ),
+      disliked: disliked as Array<{
+        id: string;
+        conversationId: string;
+        createdAt: Date;
+        answer: string;
+        question: string | null;
+      }>,
     };
   }
 }

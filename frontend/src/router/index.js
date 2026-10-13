@@ -43,6 +43,12 @@ const routes = [
         meta: { title: '回答收藏夹' }
       },
       {
+        path: 'analytics',
+        name: 'analytics',
+        component: () => import('@/views/AnalyticsView.vue'),
+        meta: { title: '数据分析' }
+      },
+      {
         path: 'settings',
         name: 'settings',
         component: () => import('@/views/SettingsView.vue'),

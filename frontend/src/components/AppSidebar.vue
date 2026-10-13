@@ -41,6 +41,15 @@
         <el-icon :size="16"><Star /></el-icon>
         <span>收藏夹</span>
       </router-link>
+      <router-link
+        v-if="userStore.profile?.role === 'admin'"
+        to="/analytics"
+        class="nav-item"
+        :class="{ active: isActive('/analytics') }"
+      >
+        <el-icon :size="16"><DataAnalysis /></el-icon>
+        <span>数据分析</span>
+      </router-link>
       <router-link to="/settings" class="nav-item" :class="{ active: isActive('/settings') }">
         <el-icon :size="16"><Setting /></el-icon>
         <span>系统设置</span>

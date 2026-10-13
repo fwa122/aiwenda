@@ -302,21 +302,30 @@
             </div>
           </el-tab-pane>
 
-          <!-- 检索评测：golden QA 数据集跑 HitRate@5 / MRR，rerank 关/开对比 -->
+          <!-- 检索评测：golden QA 用例（库内管理）跑 HitRate@5 / MRR，rerank 关/开对比 -->
           <el-tab-pane label="检索评测" name="eval" lazy>
             <div class="eval-tab">
               <div class="eval-toolbar">
                 <div class="eval-info">
                   <span>数据集</span>
-                  <el-tag size="small" effect="plain">{{ dataset?.dataset || '未加载' }}</el-tag>
-                  <span class="text-muted">{{ dataset?.cases?.length || 0 }} 条用例 · TopK=5 · 阈值=0 · 精排关/开对比 · 命中=文档锚点切片±1</span>
+                  <el-tag size="small" effect="plain">golden QA</el-tag>
+                  <span class="text-muted">
+                    {{ evalCases.length }} 条用例 · 难例 {{ hardTotal }} · 启用 {{ enabledCount }} · TopK=5 · 阈值=0 · 精排关/开对比 · 命中=文档锚点切片±1
+                  </span>
                 </div>
                 <div class="eval-actions">
+                  <el-tooltip content="仅难例：只跑标记的难例用例，用于检索改动后的回归验证" placement="top" :show-after="300" :hide-after="0">
+                    <el-select v-model="evalScope" size="small" style="width: 104px" :disabled="evalRunning">
+                      <el-option label="全部用例" value="all" />
+                      <el-option label="仅难例" value="hard" />
+                    </el-select>
+                  </el-tooltip>
+                  <el-button :disabled="evalRunning" @click="manageVisible = true">管理用例</el-button>
                   <el-button v-if="hardCount" :disabled="evalRunning" @click="exportHardCases">
                     导出难例（{{ hardCount }}）
                   </el-button>
                   <el-button v-if="evalRunning" @click="stopEval">停止</el-button>
-                  <el-button type="primary" :loading="evalRunning" :disabled="!dataset" @click="runEval">
+                  <el-button type="primary" :loading="evalRunning" :disabled="!runnableCases.length" @click="runEval">
                     <el-icon><VideoPlay /></el-icon>{{ evalRunning ? '评测中…' : '运行评测' }}
                   </el-button>
                 </div>
@@ -371,18 +380,42 @@
                       </el-tag>
                     </template>
                   </el-table-column>
+                  <el-table-column v-if="canWrite" label="难例" width="92" align="center">
+                    <template #default="{ row }">
+                      <el-tag v-if="row.isHard" size="small" type="danger" effect="light">已标记</el-tag>
+                      <el-button
+                        v-else-if="!row.offRank || !row.onRank"
+                        link
+                        type="danger"
+                        size="small"
+                        @click="markHard(row)"
+                      >
+                        标记难例
+                      </el-button>
+                      <span v-else class="text-muted">—</span>
+                    </template>
+                  </el-table-column>
                 </el-table>
               </template>
               <el-empty
                 v-else-if="!evalRunning"
-                :description="dataset ? '点击「运行评测」生成 HitRate / MRR 报告' : '正在加载评测数据集…'"
+                :description="
+                  runnableCases.length
+                    ? '点击「运行评测」生成 HitRate / MRR 报告'
+                    : '暂无启用的评测用例，请先在「管理用例」中导入或新建'
+                "
                 :image-size="80"
-              />
+              >
+                <el-button :disabled="evalRunning" @click="manageVisible = true">管理用例</el-button>
+              </el-empty>
             </div>
           </el-tab-pane>
         </el-tabs>
       </template>
     </div>
+
+    <!-- 评测用例管理抽屉（golden QA 增删改 / 导入导出 / 难例转正） -->
+    <EvalCaseDrawer v-model="manageVisible" :kb-id="route.params.id" :can-write="canWrite" @changed="fetchEvalCases" />
 
     <!-- 切片抽屉 -->
     <el-drawer v-model="chunkVisible" :title="currentDoc?.name || '文档切片'" size="520px">
@@ -414,13 +447,14 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useKnowledgeStore, useUserStore } from '@/store'
 import { canWriteKb } from '@/utils/kb-access'
-import { retrievalTest, getDocumentChunks, downloadDocument } from '@/api/knowledge'
+import { retrievalTest, getDocumentChunks, downloadDocument, getEvalCases, updateEvalCase } from '@/api/knowledge'
 import { watchKb, stopWatch } from '@/composables/useParseWatcher'
 import { getUsageStats } from '@/api/user'
 import { kbStatusMap, docStatusMap, embeddingModels, parserOptions, llmModels } from '@/mock/knowledge'
 import { formatSize, formatNumber, fromNow } from '@/utils/format'
 import DocTypeIcon from '@/components/DocTypeIcon.vue'
 import DocPreviewDrawer from '@/components/DocPreviewDrawer.vue'
+import EvalCaseDrawer from '@/components/EvalCaseDrawer.vue'
 
 const route = useRoute()
 const knowledgeStore = useKnowledgeStore()
@@ -588,21 +622,39 @@ async function runRetrieval() {
 }
 
 /* ---------------- 检索评测（golden QA · HitRate@5 / MRR@5，精排关/开对比） ---------------- */
-const dataset = ref(null)
+/** 用例持久化于数据库（按知识库隔离），增删改走「管理用例」抽屉 */
+const evalCases = ref([])
+const evalScope = ref('all') // all=全部启用用例 · hard=仅难例（回归验证）
+const manageVisible = ref(false)
+
+const enabledCount = computed(() => evalCases.value.filter((c) => c.enabled).length)
+const hardTotal = computed(() => evalCases.value.filter((c) => c.isHard).length)
+/** 本次评测实际执行用例：范围（全部/仅难例）∩ 启用 */
+const runnableCases = computed(() =>
+  (evalScope.value === 'hard'
+    ? evalCases.value.filter((c) => c.isHard)
+    : evalCases.value
+  ).filter((c) => c.enabled)
+)
+
+/** 拉取库内评测用例（进入评测 tab 或用例变更后） */
+async function fetchEvalCases() {
+  try {
+    const data = await getEvalCases(route.params.id)
+    evalCases.value = data.list || []
+  } catch {
+    ElMessage.error('评测用例加载失败')
+  }
+}
+
+watch(activeTab, (t) => {
+  if (t === 'eval' && !evalCases.value.length) fetchEvalCases()
+})
+
 const evalRunning = ref(false)
 const evalProgress = ref(0)
 const evalReport = ref(null)
 let evalAborted = false
-
-/** 进入评测 tab 时懒加载数据集（public/datasets，随构建产物分发） */
-watch(activeTab, (t) => {
-  if (t === 'eval' && !dataset.value) {
-    fetch('/datasets/golden-qa.json')
-      .then((r) => r.json())
-      .then((d) => (dataset.value = d))
-      .catch(() => ElMessage.error('评测数据集加载失败'))
-  }
-})
 
 /** 关键词命中（最严格口径）：目标文档 + 任一关键词出现在切片内容 */
 function kwHit(r, c) {
@@ -664,8 +716,11 @@ function median(arr) {
 }
 
 async function runEval() {
-  const cases = dataset.value?.cases || []
-  if (!cases.length) return
+  const cases = runnableCases.value
+  if (!cases.length) {
+    ElMessage.warning(evalScope.value === 'hard' ? '暂无标记的难例用例' : '暂无启用的评测用例')
+    return
+  }
   evalRunning.value = true
   evalAborted = false
   evalProgress.value = 0
@@ -735,6 +790,21 @@ async function runEval() {
 
 function stopEval() {
   evalAborted = true
+}
+
+/** 报告未命中行一键标记难例：写库附回归证据，并同步本地行状态（难例回归闭环入口） */
+async function markHard(row) {
+  const evidence = `[回归证据] 精排关#${row.offRank || 0} 精排开#${row.onRank || 0}`
+  const note = row.note ? `${row.note}；${evidence}` : evidence
+  try {
+    await updateEvalCase(route.params.id, row.id, { isHard: true, note })
+    row.isHard = true
+    row.note = note
+    ElMessage.success('已标记为难例，可用于「仅难例」回归评测')
+    fetchEvalCases()
+  } catch (e) {
+    ElMessage.error(e.message || '标记失败')
+  }
 }
 
 const evalMetricCards = computed(() => {

@@ -4,7 +4,7 @@
 
 基于 RAG（检索增强生成）的企业知识库问答系统。用户上传企业文档，系统完成解析、切片、向量化后，即可通过自然语言提问并获得**可溯源**的回答。
 
-> 当前阶段：**全栈已交付，支持一键 Docker 部署**。前端（Vue 3）、Node BFF（NestJS）、Python AI 服务（FastAPI + Celery）全部完成并联调通过，RAG 全链路真实跑通（解析 → 切片 → 向量化 → 混合检索 → LLM 流式生成 → 引用溯源）。项目持续迭代至 v0.9.34：**API Key 支持前端设置页配置**（智谱/千问/Kimi 存库即时生效、重启不丢，部署免手工编辑环境变量），此前已完成 MinIO 对象存储、两轮安全专项加固（Redis 认证、防爆破、JWT 刷新轮换）、检索评测体系（20 条 golden QA + 精排路由可观测）、千问多模型渠道与嵌入内容级缓存、数据库每日自动备份、**自动化测试 146 用例 + 覆盖率门槛 + GitHub Actions CI/CD**（四 job 并行 + tag 自动发版），并提供开箱即用的 Docker Compose 全栈编排（首启自动迁移 + 播种）。详见[更新日志](#更新日志)。
+> 当前阶段：**全栈已交付，支持一键 Docker 部署**。前端（Vue 3）、Node BFF（NestJS）、Python AI 服务（FastAPI + Celery）全部完成并联调通过，RAG 全链路真实跑通（解析 → 切片 → 向量化 → 混合检索 → LLM 流式生成 → 引用溯源）。项目持续迭代至 v0.9.36：**看板企业化**（部门维度成本分摊 + CSV 报表导出），此前已完成数据分析看板（成本按模型/用户拆分 + 差评闭环，admin 专属）、LLM API Key 前端配置（智谱/千问/Kimi 存库即时生效、重启不丢，部署免手工编辑环境变量）、MinIO 对象存储、两轮安全专项加固（Redis 认证、防爆破、JWT 刷新轮换）、检索评测体系（20 条 golden QA + 精排路由可观测）、千问多模型渠道与嵌入内容级缓存、数据库每日自动备份、**自动化测试 146 用例 + 覆盖率门槛 + GitHub Actions CI/CD**（四 job 并行 + tag 自动发版），并提供开箱即用的 Docker Compose 全栈编排（首启自动迁移 + 播种）。详见[更新日志](#更新日志)。
 
 ---
 
@@ -145,7 +145,7 @@ celery -A app.tasks:celery_app worker --pool=solo --loglevel=info
 | 知识库管理 | 卡片列表、新建/配置（切片参数 + 检索参数）、重建索引、删除；可见性权限（internal/public/private，IDOR 防护）；聊天页拖拽直接入库、文件夹批量导入、解析完成应用内/浏览器通知 |
 | 知识库详情 | 文档表格（解析进度/失败原因）、上传（20MB 白名单 + magic bytes 二次校验）、预览/下载（PDF 可翻页）、重新解析、切片查看、检索测试（Top K/阈值/混合检索/Rerank 实时调参）、检索评测（20 条 golden QA，HitRate@5 / MRR@5 + bootstrap 置信区间 + 难例导出）、使用统计 |
 | RAG 内核 | PDF（标题启发式 + 表格转 Markdown + 扫描件 OCR 兜底）/docx/md/txt/csv 解析；标题层级切片；双渠道嵌入（智谱 embedding-3 / 千问 qwen3.7-text-embedding，1024 维）+ pgvector HNSW；向量 + pg_trgm 词法双路召回 + RRF 融合 + rerank 精排（与召回通道解耦 + 分差自适应路由跳过）；多轮查询改写（指代消解 + 自包含问题跳过）；相邻片段合并；context 字符预算截断；嵌入内容级缓存（重解析零 API 消耗）；三道防幻觉机制 |
-| 系统设置 | 模型/检索/安全/存储分区配置、LLM API Key 前端配置（智谱/千问/Kimi 存库脱敏管理，DB 覆盖 .env、verify-key 在线验证）、API 密钥（哈希存储 + 脱敏）、用量统计（daily_stats 闭环 + 月度配额）、操作日志、用户配额 |
+| 系统设置 | 模型/检索/安全/存储分区配置、LLM API Key 前端配置（智谱/千问/Kimi 存库脱敏管理，DB 覆盖 .env、verify-key 在线验证）、API 密钥（哈希存储 + 脱敏）、用量统计（daily_stats 闭环 + 月度配额）、数据分析看板（成本按模型/用户拆分 + 差评闭环，仅 admin）、操作日志、用户配额 |
 | 安全加固 | 内部接口令牌鉴权（fail-closed）、Redis 全链路密码认证（fail-fast）、登录账号级防爆破（5 次失败锁 15 分钟）+ IP 限流（计数存 Redis，跨重启/扩容存活）、越权（IDOR）修复、上传白名单 + 大小限制 + magic bytes、CORS 白名单、JWT 强密钥启动校验、路径穿越防护、XSS/反向标签劫持防护 |
 | 运维保障 | 数据库每日自动备份 + MinIO 桶每日镜像（每类保留 7 份，附恢复演练）、nginx gzip 压缩 + 安全响应头 + index.html 不缓存（发版即时生效）、嵌入缓存 30 天 TTL 定期清理 |
 
@@ -222,6 +222,9 @@ AI问答/
 
 | 版本 | 日期 | 主题 |
 | --- | --- | --- |
+| v0.9.37 | 2026-10-13 | 新功能·评测集管理 UI：golden QA 用例入库（eval_cases 表按库隔离、外键级联删除，手写迁移绕过 schema 漂移），管理抽屉增删改/启停/JSON 导入导出/内置模板一键导入（按问题去重）；难例闭环——报告未命中一键标记难例（附回归证据）、「仅难例」回归评测、转正入口；eval-case e2e 7 例（总 38/38）+ 浏览器实测全流程绿 |
+| v0.9.36 | 2026-10-13 | 看板企业化·部门维度 + 报表导出：cost 接口新增 byDept 聚合（users.department 归组，空值归「未设置」）、byUser 携带部门；看板布局改「按模型\|按部门」双栏 + 用户整行（含部门列）；前端所见即所得导出 CSV 报表（BOM + 五 section：概览/模型/部门/用户/差评），单价表单点维护零后端端点；e2e 31/31 全绿 |
+| v0.9.35 | 2026-10-13 | 新功能·数据分析看板（P4 运营能力首项）：admin 专属「数据分析」页——成本按模型/按用户聚合（messages.meta tokens 拆输入输出）+ 日趋势 + 内置单价表估算成本；评价汇总（评价率/满意度/差评率预警）+ 最近差评明细一键跳转原会话闭环；stats/cost、stats/feedback 双 admin 端点，vitest 68 + 双端构建全绿 |
 | v0.9.34 | 2026-10-11 | 新功能·LLM API Key 前端配置：设置页配置智谱/千问/Kimi Key（system_settings.api_keys JSONB），Python web+worker 直读 DB（45s TTL 缓存 + reload 推送即时生效），DB 覆盖 .env、fail-soft 回落；出口统一脱敏（configured/tail/source）、三态写入语义、verify-key 在线验证（GET /models 探测不耗 token）、keyPresence 在场状态；pytest 78 + vitest 68 + 11 步全链路冒烟全绿 |
 | v0.9.33 | 2026-10-11 | 新功能·遗留半成品落地：敏感词过滤（会话落库前拦截，零 LLM 消耗）、IP 白名单全局 Guard（精确 IP + IPv4 CIDR、loopback 恒放行、30s 缓存）、非 owner 知识库写入口前端隐藏；vitest 60 + 前端构建 ✓ |
 | v0.9.32 | 2026-10-11 | 新功能·API 密钥认证闭环：sk-kb-* 复合认证守卫（JWT + 密钥双通道）、scope 收敛防越权、每日配额惰性重置、keyHash 唯一索引；单测 30 + chat e2e 12 全绿，CI 动作升级 target Node 24 |

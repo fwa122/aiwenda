@@ -100,11 +100,37 @@ model KnowledgeBase {
 
   documents Document[]
   chunks    Chunk[]
+  evalCases EvalCase[]
 
   @@index([status])
   @@index([userId])
   @@index([updatedAt])
   @@map("knowledge_bases")
+}
+
+// ============================================================================
+// 检索评测用例（golden QA，按知识库隔离）
+// 评测在浏览器端逐条调用检索测试接口计分（HitRate@5 / MRR@5），
+// 本表只存用例本体；source 标记来源（手工/内置模板/难例回归）。
+// ============================================================================
+model EvalCase {
+  id              String   @id // evc_xxx
+  kbId            String   @map("kb_id")
+  question        String   @db.VarChar(512)
+  docNameContains String   @map("doc_name_contains") @db.VarChar(128)
+  keywords        String[] @map("keywords")
+  note            String?  @db.Text
+  source          String   @default("manual") @db.VarChar(16) // manual | template | hardcase
+  isHard          Boolean  @default(false) @map("is_hard")
+  enabled         Boolean  @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+
+  @@index([kbId, enabled])
+  @@map("eval_cases")
 }
 
 // ============================================================================

@@ -17,13 +17,16 @@ import { OperationLogService } from '../log/operation-log.service';
 import { AiServiceClient } from '../integrations/ai-service.client';
 import { EmbeddingStateService } from '../settings/embedding-state.service';
 import { KnowledgeBaseService } from './knowledge-base.service';
+import { EvalCaseService } from './eval-case.service';
 import { CreateKbDto, UpdateKbDto } from './dto/knowledge-base.dto';
+import { CreateEvalCaseDto, ImportEvalCasesDto, UpdateEvalCaseDto } from './dto/eval-case.dto';
 
 @Controller('knowledge')
 @UseGuards(JwtAuthGuard)
 export class KnowledgeBaseController {
   constructor(
     private readonly service: KnowledgeBaseService,
+    private readonly evalCases: EvalCaseService,
     private readonly log: OperationLogService,
     private readonly ai: AiServiceClient,
     private readonly embeddingState: EmbeddingStateService
@@ -109,5 +112,48 @@ export class KnowledgeBaseController {
       results: upstream.results,
       route: upstream.route,
     };
+  }
+
+  // ==========================================================================
+  // 检索评测用例（golden QA，浏览器端逐条跑检索测试计分）
+  // 读与检索测试同口径（可见即可读），写与知识库配置同口径（owner / admin）
+  // ==========================================================================
+
+  @Get(':id/eval-cases')
+  listEvalCases(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.evalCases.list(id, user);
+  }
+
+  @Post(':id/eval-cases')
+  createEvalCase(@Param('id') id: string, @Body() dto: CreateEvalCaseDto, @CurrentUser() user: any) {
+    return this.evalCases.create(id, dto, user);
+  }
+
+  @Post(':id/eval-cases/import')
+  importEvalCases(
+    @Param('id') id: string,
+    @Body() dto: ImportEvalCasesDto,
+    @CurrentUser() user: any
+  ) {
+    return this.evalCases.import(id, dto, user);
+  }
+
+  @Put(':id/eval-cases/:caseId')
+  updateEvalCase(
+    @Param('id') id: string,
+    @Param('caseId') caseId: string,
+    @Body() dto: UpdateEvalCaseDto,
+    @CurrentUser() user: any
+  ) {
+    return this.evalCases.update(id, caseId, dto, user);
+  }
+
+  @Delete(':id/eval-cases/:caseId')
+  removeEvalCase(
+    @Param('id') id: string,
+    @Param('caseId') caseId: string,
+    @CurrentUser() user: any
+  ) {
+    return this.evalCases.remove(id, caseId, user);
   }
 }

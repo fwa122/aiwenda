@@ -311,6 +311,109 @@ export function retrievalTest(payload) {
 }
 
 /* ==========================================================================
+   检索评测用例（golden QA，按知识库隔离）
+   ========================================================================== */
+
+/** mock 存储：按知识库隔离的内存用例集 */
+const mockEvalCases = new Map()
+
+function mockCaseList(kbId) {
+  if (!mockEvalCases.has(kbId)) mockEvalCases.set(kbId, [])
+  return mockEvalCases.get(kbId)
+}
+
+/** 归一化 mock/导入共用的用例字段 */
+function normalizeCaseInput(payload) {
+  return {
+    question: String(payload.question || '').trim(),
+    docNameContains: String(payload.docNameContains || '').trim(),
+    keywords: (payload.keywords || []).map((k) => String(k).trim()).filter(Boolean),
+    note: payload.note || '',
+    source: payload.source || 'manual',
+    isHard: !!payload.isHard,
+    enabled: payload.enabled !== false
+  }
+}
+
+function sortCases(list) {
+  return [...list].sort((a, b) => (a.isHard === b.isHard ? 0 : a.isHard ? 1 : -1))
+}
+
+/** 用例列表（难例排后，与后端排序口径一致） */
+export function getEvalCases(kbId) {
+  if (USE_MOCK) {
+    return mockOk({ list: sortCases(mockCaseList(kbId)), total: mockCaseList(kbId).length }, 160)
+  }
+  return request({ url: `/v1/knowledge/${kbId}/eval-cases`, method: 'get' })
+}
+
+/** 新增评测用例（同库内问题唯一） */
+export function createEvalCase(kbId, payload) {
+  if (USE_MOCK) {
+    const item = normalizeCaseInput(payload)
+    if (!item.question) return Promise.reject(new Error('问题不能为空'))
+    const list = mockCaseList(kbId)
+    if (list.some((c) => c.question === item.question)) {
+      return Promise.reject(new Error('已存在相同问题的用例'))
+    }
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    const created = { id: uid('evc'), kbId, ...item, createdAt: now, updatedAt: now }
+    list.push(created)
+    return mockOk(clone(created), 240)
+  }
+  return request({ url: `/v1/knowledge/${kbId}/eval-cases`, method: 'post', data: payload })
+}
+
+/** 更新评测用例（未传字段保持原值） */
+export function updateEvalCase(kbId, caseId, payload) {
+  if (USE_MOCK) {
+    const list = mockCaseList(kbId)
+    const item = list.find((c) => c.id === caseId)
+    if (!item) return Promise.reject(new Error('评测用例不存在'))
+    Object.assign(item, normalizeCaseInput({ ...item, ...payload }), {
+      updatedAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
+    })
+    return mockOk(clone(item), 220)
+  }
+  return request({ url: `/v1/knowledge/${kbId}/eval-cases/${caseId}`, method: 'put', data: payload })
+}
+
+/** 删除评测用例 */
+export function deleteEvalCase(kbId, caseId) {
+  if (USE_MOCK) {
+    const list = mockCaseList(kbId)
+    const idx = list.findIndex((c) => c.id === caseId)
+    if (idx === -1) return Promise.reject(new Error('评测用例不存在'))
+    list.splice(idx, 1)
+    return mockOk({ id: caseId }, 220)
+  }
+  return request({ url: `/v1/knowledge/${kbId}/eval-cases/${caseId}`, method: 'delete' })
+}
+
+/** 批量导入用例：按问题全等去重，返回 { created, skipped } */
+export function importEvalCases(kbId, cases) {
+  if (USE_MOCK) {
+    const list = mockCaseList(kbId)
+    const seen = new Set(list.map((c) => c.question))
+    let created = 0
+    let skipped = 0
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    cases.forEach((raw) => {
+      const item = normalizeCaseInput(raw)
+      if (!item.question || seen.has(item.question)) {
+        skipped += 1
+        return
+      }
+      seen.add(item.question)
+      list.push({ id: uid('evc'), kbId, ...item, createdAt: now, updatedAt: now })
+      created += 1
+    })
+    return mockOk({ created, skipped }, 320)
+  }
+  return request({ url: `/v1/knowledge/${kbId}/eval-cases/import`, method: 'post', data: { cases } })
+}
+
+/* ==========================================================================
    文档原始文件：预览 / 下载
    ========================================================================== */
 

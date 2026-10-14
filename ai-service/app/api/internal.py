@@ -10,9 +10,10 @@ from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from .. import llm, parser, retrieval
+from .. import answer_cache, llm, parser, retrieval
 from ..config import settings
 from ..db import _embedding_cache_ddl, ensure_embedding_state, execute, fetch_all, fetch_one, pool
+from ..embedding import embed_query
 from ..keystore import invalidate as keystore_invalidate
 from ..keystore import resolve_key as keystore_resolve_key
 from ..tasks import parse_document, reembed_document
@@ -156,6 +157,12 @@ class ChatRequest(BaseModel):
     rerank: bool = False
     # 用户上传附件（Node 侧已提取文本）：仅本次回答有效，不进知识库
     attachments: list['Attachment'] = Field(default_factory=list)
+    # 语义缓存：命中同库组合下语义相近问题直接重放缓存答案（毫秒级，省 LLM 与检索）
+    useCache: bool = True
+    # 命中阈值：cosine 距离上限（0.12 ≈ 相似度 0.88），偏严格防答非所问
+    cacheThreshold: float = 0.12
+    # 缓存条目保留天数
+    cacheTtlDays: int = 7
 
 
 class Attachment(BaseModel):
@@ -288,7 +295,9 @@ def trigger_reembed():
             conn.execute('SELECT pg_advisory_xact_lock(860425001)')
             conn.execute('DROP TABLE IF EXISTS embedding_cache')
             conn.execute(_embedding_cache_ddl())
-    # 4) 摘除 HNSW 索引：批量更新期间维护索引纯浪费，收尾时统一重建
+        # 4) 答案缓存的查询向量同为旧维度：删表重置，下次使用按新维度重建
+        answer_cache.drop_for_dimension_change()
+    # 5) 摘除 HNSW 索引：批量更新期间维护索引纯浪费，收尾时统一重建
     execute('DROP INDEX IF EXISTS chunks_embedding_hnsw_idx')
 
     total_chunks = sum(d['cnt'] for d in docs)
@@ -371,6 +380,17 @@ def search(body: SearchRequest):
     }
 
 
+class CacheInvalidateRequest(BaseModel):
+    kbIds: list[str] | None = None  # 省略 = 全库清空
+
+
+@router.post('/cache/invalidate')
+def cache_invalidate(body: CacheInvalidateRequest):
+    """知识库内容变更后清答案缓存（Node 在文档解析/删除/重建索引/重嵌入完成后调用）"""
+    deleted = answer_cache.invalidate(body.kbIds)
+    return {'ok': True, 'deleted': deleted}
+
+
 @router.post('/chat')
 def chat(body: ChatRequest):
     def gen():
@@ -380,11 +400,40 @@ def chat(body: ChatRequest):
                 # 兜底禁答（正常路径由 Node 侧拦截）：防重嵌入期间新旧渠道向量混检
                 yield sse('error', {'message': '知识库正在全库重嵌入，问答暂不可用，完成后自动恢复'})
                 return
+            # 语义缓存：仅单轮、无附件时启用（多轮回答依赖对话上下文、附件问答依赖本次
+            # 上传内容，复用缓存会串答）。问题嵌入提前：命中用于缓存判定，未命中把
+            # 向量透传检索层避免二次嵌入。
+            cacheable = (
+                body.useCache and bool(body.kbIds) and not body.history and not body.attachments
+            )
+            query_vec: list[float] | None = None
+            cache_entry: dict | None = None
+            if cacheable:
+                query_vec = embed_query(body.question)
+                cache_entry = answer_cache.lookup(body.kbIds, query_vec, body.cacheThreshold)
+
+            if cache_entry is not None:
+                # 命中：计数后按段重放缓存答案（保持前端流式渲染体验）
+                answer_cache.record_hit(cache_entry['id'])
+                yield sse('references', cache_entry['refs'])
+                for i in range(0, len(cache_entry['answer']), 120):
+                    yield sse('delta', {'content': cache_entry['answer'][i:i + 120]})
+                yield sse('done', {'meta': {
+                    'model': cache_entry['model'],
+                    'cacheHit': True,
+                    'elapsedMs': int((time.time() - started) * 1000),
+                    'tokens': {
+                        'prompt': cache_entry['promptTokens'],
+                        'completion': cache_entry['completionTokens'],
+                    },
+                }})
+                return
+
             # 多轮改写：有历史时先消解指代，再检索（原问题仍用于生成）
             search_query = rewrite_query(body.question, body.history)
             results = retrieval.search(
                 body.kbIds, search_query, body.topK, body.threshold,
-                hybrid=body.hybrid, rerank=body.rerank,
+                hybrid=body.hybrid, rerank=body.rerank, query_vec=query_vec,
             )
             results = merge_adjacent(results)
 
@@ -463,10 +512,12 @@ def chat(body: ChatRequest):
                 stream.close()
 
             # 强制引用校验：回答中无 [n] 编号时自动追加来源列表
-            if body.forceCitation and results and not re.search(r'\[\d+\]', ''.join(answer_parts)):
+            final_answer = ''.join(answer_parts)
+            if body.forceCitation and results and not re.search(r'\[\d+\]', final_answer):
                 appendix = '\n\n参考来源：\n' + '\n'.join(
                     f"[{i + 1}] {r['docName']} 第{r['page']}页" for i, r in enumerate(results)
                 )
+                final_answer += appendix
                 yield sse('delta', {'content': appendix})
 
             yield sse('done', {'meta': {
@@ -476,6 +527,24 @@ def chat(body: ChatRequest):
                 # 改写生效时记录改写后的检索查询（调试可见；原样检索时为 None）
                 'rewrittenQuery': search_query if search_query != body.question else None,
             }})
+
+            # 写缓存：仅 cacheable 路径且引用非空。置于 done 之后——客户端中途断开时
+            # 生成器在 yield 处被关闭，走不到这里（答案生成完整性天然保证）
+            if cacheable and refs:
+                try:
+                    answer_cache.store(
+                        kb_ids=body.kbIds,
+                        question=body.question,
+                        embedding=query_vec,
+                        answer=final_answer,
+                        refs=refs,
+                        model=model_used,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        ttl_days=body.cacheTtlDays,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f'[chat] 答案缓存写入失败（不影响问答）: {exc}')
         except Exception as exc:  # noqa: BLE001
             # 完整堆栈只进服务端日志；对外仅透出白名单文案（safe_error_message）
             print('[chat] 流式问答失败:', traceback.format_exc())

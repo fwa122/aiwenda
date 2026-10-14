@@ -36,12 +36,15 @@ export class SettingsController {
     return this.ai.embeddingState();
   }
 
-  /** 触发全库重嵌入（admin）：前端确认框已核对成本与不可逆风险 */
+  /** 触发全库重嵌入（admin）：前端确认框已核对成本与不可逆风险。
+   *  触发即失效全部答案缓存（重嵌入后检索结果整体刷新，缓存答案不再可靠） */
   @Post('embedding/reembed')
   @UseGuards(RolesGuard)
   @Roles('admin')
   triggerReembed() {
-    return this.ai.triggerReembed();
+    const result = this.ai.triggerReembed();
+    this.ai.invalidateAnswerCache();
+    return result;
   }
 
   /** 验证 LLM API Key 有效性（admin）：key 缺省时验证当前生效值（DB 覆盖 > .env） */

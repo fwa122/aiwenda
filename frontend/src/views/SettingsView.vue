@@ -138,6 +138,31 @@
               </el-select>
             </el-form-item>
 
+            <!-- 答案语义缓存（v0.9.40）：同库组合下语义相近问题直接复用答案 -->
+            <el-divider content-position="left">答案语义缓存</el-divider>
+            <el-form-item label="语义缓存">
+              <el-switch v-model="settings.cache.enableSemanticCache" />
+              <span class="form-hint">
+                同库组合下语义相近的问题直接复用答案，命中毫秒级响应；多轮对话与附件问答不启用
+              </span>
+            </el-form-item>
+            <el-form-item v-if="settings.cache.enableSemanticCache" label="命中阈值">
+              <el-slider
+                v-model="settings.cache.cacheThreshold"
+                :min="0.05"
+                :max="0.3"
+                :step="0.01"
+                style="width: 320px"
+              />
+              <span class="form-hint">
+                cosine 距离 ≤ {{ Number(settings.cache.cacheThreshold).toFixed(2) }}（越小越严格，0.12 ≈ 相似度 0.88）
+              </span>
+            </el-form-item>
+            <el-form-item v-if="settings.cache.enableSemanticCache" label="缓存天数">
+              <el-input-number v-model="settings.cache.cacheTtlDays" :min="1" :max="30" />
+              <span class="form-hint">缓存条目保留天数；知识库文档变更时自动失效</span>
+            </el-form-item>
+
             <!-- 嵌入渠道与全库重嵌入（admin）：换 .env 渠道后全库向量重建 -->
             <template v-if="isAdmin">
               <el-divider content-position="left">嵌入渠道与全库重嵌入</el-divider>
@@ -547,6 +572,11 @@ const settings = reactive({
     embeddingModel: 'bge-large-zh-v1.5',
     maxFileSize: 100,
     ocrEnabled: true
+  },
+  cache: {
+    enableSemanticCache: true,
+    cacheThreshold: 0.12,
+    cacheTtlDays: 7
   }
 })
 

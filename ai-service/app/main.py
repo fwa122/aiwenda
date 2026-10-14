@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from .answer_cache import ensure_answer_cache
 from .api import internal, health
 from .db import ensure_embedding_cache, ensure_embedding_state, ensure_indexes
 
@@ -15,9 +16,10 @@ async def lifespan(_: FastAPI):
     try:
         ensure_embedding_cache()
         ensure_embedding_state()
+        ensure_answer_cache()
     except Exception as exc:  # noqa: BLE001
-        # DB 短暂不可用时不阻塞 API 启动：首次解析任务经 embed_texts_cached 惰性兜底建表
-        print(f'[lifespan] 警告：嵌入缓存/重嵌入状态表初始化失败（任务内惰性兜底）: {exc}')
+        # DB 短暂不可用时不阻塞 API 启动：首次使用时惰性兜底建表
+        print(f'[lifespan] 警告：缓存/重嵌入状态表初始化失败（使用时惰性兜底）: {exc}')
     yield
 
 

@@ -44,6 +44,10 @@ export class UpdateSettingsDto {
   storage?: Record<string, any>;
 
   @IsOptional()
+  @IsObject()
+  cache?: Record<string, any>;
+
+  @IsOptional()
   @ValidateNested()
   @Type(() => ApiKeysDto)
   apiKeys?: ApiKeysDto;

@@ -156,11 +156,13 @@ def search(
     hybrid: bool = False,
     rerank: bool = False,
     meta: dict | None = None,
+    query_vec: list[float] | None = None,
 ) -> list[dict]:
     if not kb_ids or not query.strip():
         return []
 
-    vector = embed_query(query)
+    # 语义缓存路径复用 /chat 预计算的问题向量，避免二次嵌入
+    vector = query_vec if query_vec is not None else embed_query(query)
     vstr = vec_literal(vector)
 
     # 候选池：两路各取 top-N

@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { genId } from '../common/id.util';
 import { canReadKb, canWriteKb, SessionUser } from '../common/kb-access';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiServiceClient } from '../integrations/ai-service.client';
 import { CreateKbDto, UpdateKbDto } from './dto/knowledge-base.dto';
 
 const DEFAULT_RETRIEVER = {
@@ -27,7 +28,10 @@ const DEFAULT_LLM = {
 
 @Injectable()
 export class KnowledgeBaseService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    private readonly ai: AiServiceClient
+  ) {}
 
   /** 由 DTO 构造 retrieverConfig / llmConfig 两张 Json */
   private buildConfig(dto: CreateKbDto | UpdateKbDto, existing?: {
@@ -220,6 +224,8 @@ export class KnowledgeBaseService {
   async remove(id: string, user: SessionUser) {
     const { kb: existing } = await this.assertWritable(id, user);
     await this.prisma.knowledgeBase.delete({ where: { id } });
+    // 库已删除：清掉含该库的答案缓存条目（kb_hash 永不再命中，顺带清理存储）
+    this.ai.invalidateAnswerCache([id]);
     return { id, name: existing.name };
   }
 
@@ -234,6 +240,8 @@ export class KnowledgeBaseService {
       where: { id },
       data: { status: 'indexing' },
     });
+    // 向量将整体重建：失效该库答案语义缓存
+    this.ai.invalidateAnswerCache([id]);
     return { id, status: 'indexing' };
   }
 }

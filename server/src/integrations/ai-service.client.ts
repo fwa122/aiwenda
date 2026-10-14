@@ -32,6 +32,10 @@ export interface InternalChatPayload {
   maxTokens?: number;
   /** 强制引用：回答无 [n] 编号时由 Python 自动追加来源列表 */
   forceCitation?: boolean;
+  /** 语义缓存：命中同库组合下语义相近问题直接重放缓存答案（Node 从 settings 读取后传入） */
+  useCache?: boolean;
+  cacheThreshold?: number;
+  cacheTtlDays?: number;
 }
 
 const MOCK_ANSWER = `根据当前知识库内容，为您整理如下回答：
@@ -106,6 +110,19 @@ export class AiServiceClient {
       body: JSON.stringify({}),
       signal: AbortSignal.timeout(5000),
     }).catch((e) => this.logger.warn(`推送 key 重载失败: ${e?.message}`));
+  }
+
+  /**
+   * 失效答案语义缓存（fire-and-forget，失败仅告警不影响主流程）。
+   * kbIds 省略 = 全库清空。知识库内容变更（文档增删/重解析/重建索引/重嵌入）后调用。
+   */
+  invalidateAnswerCache(kbIds?: string[]): void {
+    fetch(`${this.baseUrl}/internal/cache/invalidate`, {
+      method: 'POST',
+      headers: this.authHeaders(),
+      body: JSON.stringify(kbIds?.length ? { kbIds } : {}),
+      signal: AbortSignal.timeout(5000),
+    }).catch((e) => this.logger.warn(`答案缓存失效推送失败: ${e?.message}`));
   }
 
   /** 验证 provider key 有效性（Python 侧 GET /models 探测，不消耗对话 token） */

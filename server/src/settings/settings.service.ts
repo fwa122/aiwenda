@@ -41,6 +41,12 @@ export const DEFAULT_SETTINGS = {
     maxFileSize: 100,
     ocrEnabled: true,
   },
+  // 语义缓存（v0.9.40）：同库组合下语义相近问题直接复用答案，命中毫秒级响应
+  cache: {
+    enableSemanticCache: true,
+    cacheThreshold: 0.12, // cosine 距离上限（≈相似度 0.88），偏严格防答非所问
+    cacheTtlDays: 7,
+  },
 };
 
 const SETTINGS_ID = 1;
@@ -92,6 +98,7 @@ export class SettingsService {
         retrieval: DEFAULT_SETTINGS.retrieval as Prisma.InputJsonValue,
         security: DEFAULT_SETTINGS.security as Prisma.InputJsonValue,
         storage: DEFAULT_SETTINGS.storage as Prisma.InputJsonValue,
+        cache: DEFAULT_SETTINGS.cache as Prisma.InputJsonValue,
       },
     });
   }
@@ -110,6 +117,7 @@ export class SettingsService {
       retrieval: merge(dto.retrieval, current.retrieval) as Prisma.InputJsonValue,
       security: merge(dto.security, current.security) as Prisma.InputJsonValue,
       storage: merge(dto.storage, current.storage) as Prisma.InputJsonValue,
+      cache: merge(dto.cache, current.cache) as Prisma.InputJsonValue,
     };
     if (dto.apiKeys) {
       data.apiKeys = this.mergeApiKeys(current.apiKeys, dto.apiKeys);

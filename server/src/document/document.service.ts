@@ -174,8 +174,10 @@ export class DocumentService {
       data: { docCount, status: 'indexing' },
     });
 
-    // 投递解析任务（fire-and-forget；AI 服务不可达时文档停留 pending）
+    // 投递解析任务（fire-and-forget；AI 服务不可达时文档停留 pending）。
+    // 知识库内容即将变更：同步失效该库答案语义缓存（库内新增内容不命中旧缓存）
     created.forEach((doc) => this.ai.submitParseTask(doc.id));
+    this.ai.invalidateAnswerCache([kbId]);
 
     return created;
   }
@@ -208,6 +210,9 @@ export class DocumentService {
       },
     });
 
+    // 文档已删除：失效该库答案语义缓存（防止已删内容继续作为缓存答案返回）
+    this.ai.invalidateAnswerCache([kbId]);
+
     return { id: docId, name: doc.name };
   }
 
@@ -224,6 +229,8 @@ export class DocumentService {
       data: { status: 'parsing', progress: 0 },
     });
     this.ai.submitParseTask(docId);
+    // 重解析将重建切片与向量：失效该库答案语义缓存
+    this.ai.invalidateAnswerCache([kbId]);
     return { id: docId };
   }
 

@@ -82,11 +82,13 @@ export class StatsService {
    * 成本分析（仅 admin）：近 N 天 Token 消耗按模型/按用户聚合 + 日趋势。
    * tokens 数据取自 messages.meta（每条回答落库时写入 model + tokens），
    * 日趋势复用 daily_stats 日粒度表。
+   * 语义缓存命中（meta.cacheHit=true）的答案为缓存重放，tokens 非真实消耗：
+   * byModel/byUser/byDept 三段聚合均排除，单列 cacheSaved 展示节省量。
    */
   async cost(days: number) {
     const range = clampDays(days);
 
-    const [byModel, byUser, byDept, trendRows, weekRows] = await Promise.all([
+    const [byModel, byUser, byDept, trendRows, weekRows, cacheSavedRows] = await Promise.all([
       this.prisma.$queryRaw`
         SELECT meta->>'model' AS model,
                COUNT(*)::int AS count,
@@ -97,6 +99,7 @@ export class StatsService {
         FROM messages
         WHERE role = 'assistant' AND status = 'done'
           AND meta->'tokens'->>'total' IS NOT NULL
+          AND (meta->>'cacheHit')::boolean IS NOT TRUE
           AND created_at >= NOW() - make_interval(days => ${range}::int)
         GROUP BY meta->>'model'
         ORDER BY tokens DESC`,
@@ -109,6 +112,7 @@ export class StatsService {
         JOIN users u ON u.id = c.user_id
         WHERE m.role = 'assistant' AND m.status = 'done'
           AND m.meta->'tokens'->>'total' IS NOT NULL
+          AND (m.meta->>'cacheHit')::boolean IS NOT TRUE
           AND m.created_at >= NOW() - make_interval(days => ${range}::int)
         GROUP BY u.id, u.username, u.nickname
         ORDER BY tokens DESC`,
@@ -123,6 +127,7 @@ export class StatsService {
         JOIN users u ON u.id = c.user_id
         WHERE m.role = 'assistant' AND m.status = 'done'
           AND m.meta->'tokens'->>'total' IS NOT NULL
+          AND (m.meta->>'cacheHit')::boolean IS NOT TRUE
           AND m.created_at >= NOW() - make_interval(days => ${range}::int)
         GROUP BY 1
         ORDER BY tokens DESC`,
@@ -134,6 +139,14 @@ export class StatsService {
       this.prisma.dailyStat.aggregate({
         _sum: { questions: true, tokens: true },
       }),
+      // 缓存节省聚合：命中次数 + 重放 tokens（估算节省的 LLM 消耗）
+      this.prisma.$queryRaw`
+        SELECT COUNT(*)::int AS hits,
+               COALESCE(SUM((meta->'tokens'->>'total')::bigint), 0)::bigint AS tokens
+        FROM messages
+        WHERE role = 'assistant' AND status = 'done'
+          AND (meta->>'cacheHit')::boolean IS TRUE
+          AND created_at >= NOW() - make_interval(days => ${range}::int)`,
     ]);
 
     const trend = (trendRows as Array<{ date: string; questions: number; tokens: bigint }>).map(
@@ -164,6 +177,10 @@ export class StatsService {
       total: {
         questions: Number(weekRows._sum.questions || 0),
         tokens: Number(weekRows._sum.tokens || 0),
+      },
+      cacheSaved: {
+        hits: Number((cacheSavedRows as Array<{ hits: number; tokens: bigint }>)[0]?.hits || 0),
+        tokens: Number((cacheSavedRows as Array<{ hits: number; tokens: bigint }>)[0]?.tokens || 0),
       },
     };
   }

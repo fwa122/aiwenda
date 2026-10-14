@@ -97,6 +97,28 @@ beforeAll(async () => {
         res.end();
         return;
       }
+      if (q.includes('CACHE_HIT_')) {
+        // v0.9.40 语义缓存命中样例：上游直接重放缓存答案，done.meta 带 cacheHit=true
+        // 与较大的重放 tokens（用于验证 BFF 落库 cacheHit 且统计侧不计费）
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.write(`data: ${JSON.stringify({ type: 'references', data: [REF] })}\n\n`);
+        res.write('data: {"type":"delta","data":{"content":"缓存答案"}}\n\n');
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'done',
+            data: {
+              meta: {
+                model: 'test-model',
+                elapsedMs: 1,
+                cacheHit: true,
+                tokens: { prompt: 500, completion: 100 },
+              },
+            },
+          })}\n\n`
+        );
+        res.end();
+        return;
+      }
       // 默认正常流：引用 → 两段增量 → done
       res.setHeader('Content-Type', 'text/event-stream');
       res.write(`data: ${JSON.stringify({ type: 'references', data: [REF] })}\n\n`);
@@ -387,6 +409,69 @@ describe('POST /api/v1/chat/completions（BFF 编排，mock ai-service）', () =
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.message).toBe('会话不存在');
+  });
+
+  it('v0.9.40 语义缓存命中：done.meta.cacheHit 落库，月度用量按 0 计费，默认透传 useCache=true', async () => {
+    const token = await login();
+    const before = await prisma.user.findUnique({
+      where: { username: USERNAME },
+      select: { monthlyTokenUsed: true, tokenMonth: true },
+    });
+
+    const { status, events } = await sseProbe(token, {
+      question: 'CACHE_HIT_年假政策',
+      kbIds: [],
+      model: 'test-model',
+    });
+    expect(status).toBe(200);
+    // 缓存重放事件序列：引用 → 单段增量 → done → title
+    expect(typesOf(events)).toEqual(['references', 'delta', 'done', 'title']);
+    expect(events[1].data.content).toBe('缓存答案');
+    const done = events[2].data;
+    expect(done.meta.cacheHit).toBe(true);
+    expect(done.meta.tokens).toEqual({ prompt: 500, completion: 100, total: 600 });
+
+    // 落库：assistant 消息 meta.cacheHit=true（统计侧按此排除计费）
+    const msg = await prisma.message.findUnique({ where: { id: done.messageId } });
+    expect(msg?.status).toBe('done');
+    expect((msg?.meta as any)?.cacheHit).toBe(true);
+
+    // 月度用量：billable=0，前后快照差为 0（防缓存重放虚报成本）
+    const after = await prisma.user.findUnique({
+      where: { username: USERNAME },
+      select: { monthlyTokenUsed: true, tokenMonth: true },
+    });
+    const month = new Date().toISOString().slice(0, 7);
+    const usedOf = (u: { monthlyTokenUsed: number; tokenMonth: string } | null) =>
+      u && u.tokenMonth === month ? u.monthlyTokenUsed : 0;
+    expect(usedOf(after) - usedOf(before)).toBe(0);
+
+    // 透传体：系统设置无 cache 区块时默认启用（enableSemanticCache !== false）
+    expect(receivedChats[receivedChats.length - 1].useCache).toBe(true);
+  });
+
+  it('v0.9.40 语义缓存开关关闭：settings.cache.enableSemanticCache=false → 透传 useCache=false 直连', async () => {
+    const off = { enableSemanticCache: false, cacheThreshold: 0.12, cacheTtlDays: 7 };
+    const on = { enableSemanticCache: true, cacheThreshold: 0.12, cacheTtlDays: 7 };
+    await prisma.systemSetting.upsert({
+      where: { id: 1 },
+      // create 分支补齐单行表必填区块（并行 e2e 可能已建/未建该行）
+      create: { id: 1, model: {}, retrieval: {}, security: {}, storage: {}, cache: off },
+      update: { cache: off },
+    });
+    try {
+      const token = await login();
+      await sseProbe(token, { question: 'CACHE_HIT_开关关闭直连', kbIds: [], model: 'test-model' });
+      // BFF 不自行判定命中，仅透传开关；mock 上游仍返回 cacheHit 样例
+      expect(receivedChats[receivedChats.length - 1].useCache).toBe(false);
+    } finally {
+      // 恢复现场：系统设置为单行共享数据，避免影响其他用例/文件
+      await prisma.systemSetting.upsert({
+        where: { id: 1 },
+        create: { id: 1, model: {}, retrieval: {}, security: {}, storage: {}, cache: on },
+        update: { cache: on },
+      });
+    }
   });
 });
 

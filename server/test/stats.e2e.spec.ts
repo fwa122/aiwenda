@@ -140,6 +140,22 @@ beforeAll(async () => {
       feedback: 'dislike',
     },
   });
+  // v0.9.40：语义缓存命中样例（cacheHit=true 的 tokens 是重放值，计费口径应被排除）
+  await prisma.message.create({
+    data: {
+      id: `msg_s_a3_${RUN}`,
+      conversationId: CONV_ID,
+      role: 'assistant',
+      content: '方案 A（缓存重放样例）',
+      status: 'done',
+      meta: {
+        model: UNIQUE_MODEL,
+        elapsedMs: 5,
+        tokens: { prompt: 200, completion: 100, total: 300 },
+        cacheHit: true,
+      },
+    },
+  });
   // daily_stats 日粒度行（date 唯一，upsert 兼容并行文件已写入今日行的场景）
   await prisma.dailyStat.upsert({
     where: { date: new Date(new Date().toISOString().slice(0, 10)) },
@@ -208,6 +224,8 @@ describe('GET /api/v1/stats/cost（成本分析，仅 admin）', () => {
 
     const row = res.body.data.byModel.find((r: any) => r.model === UNIQUE_MODEL);
     expect(row).toBeTruthy();
+    // v0.9.40：种子 a3（cacheHit=true, total=300）不计入计费聚合，
+    // count/tokens 保持 2/1400 即验证缓存命中消息已被 SQL 排除
     expect(row.count).toBe(2);
     expect(row.tokens).toBe(1400);
     expect(row.promptTokens).toBe(1000);
@@ -243,6 +261,16 @@ describe('GET /api/v1/stats/cost（成本分析，仅 admin）', () => {
     const bad = await probe('GET', '/api/v1/stats/cost?days=abc', { token: adminToken });
     expect(bad.status).toBe(200);
     expect(bad.body.data.days).toBe(30);
+  });
+
+  it('v0.9.40 cacheSaved：缓存命中单独聚合（hits/tokens 下界断言，兼容并行文件的额外命中样本）', async () => {
+    const res = await probe('GET', '/api/v1/stats/cost', { token: adminToken });
+    expect(res.status).toBe(200);
+
+    // a3 种子（cacheHit=true, total=300）必须出现在 cacheSaved；chat.e2e 并行运行
+    // 时其 CACHE_HIT_ 样例（600 tokens）也会贡献，故用下界而非精确值
+    expect(res.body.data.cacheSaved.hits).toBeGreaterThanOrEqual(1);
+    expect(res.body.data.cacheSaved.tokens).toBeGreaterThanOrEqual(300);
   });
 });
 

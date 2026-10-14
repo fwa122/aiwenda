@@ -79,6 +79,8 @@ interface DoneMeta {
   tokens: { prompt: number; completion: number; total: number };
   /** 多轮改写后的检索词（改写未生效时为 null）——调试可见，v0.9.13 遗留透传 */
   rewrittenQuery?: string | null;
+  /** 语义缓存命中：答案为缓存重放，tokens 不代表真实消耗（统计侧排除） */
+  cacheHit?: boolean;
 }
 
 @Injectable()
@@ -270,6 +272,13 @@ export class ChatService {
     /** 强制引用：无 [n] 编号时由 Python 自动追加来源列表 */
     const forceCitation = modelSettings.enableCitation !== false;
 
+    // 语义缓存（settings.cache）：关闭时显式传 false 直连检索；阈值/TTL 非法值回落默认
+    const cacheSettings: any = settings?.cache || {};
+    const useCache = cacheSettings.enableSemanticCache !== false;
+    const cacheThreshold =
+      typeof cacheSettings.cacheThreshold === 'number' ? cacheSettings.cacheThreshold : 0.12;
+    const cacheTtlDays = Number(cacheSettings.cacheTtlDays) > 0 ? Number(cacheSettings.cacheTtlDays) : 7;
+
     // 4. 历史 N 轮上下文（当前 user 消息之前），带 token 预算裁剪
     const historyRows = await this.prisma.message.findMany({
       where: {
@@ -350,14 +359,17 @@ export class ChatService {
         const elapsed = meta.elapsedMs || 0;
         const hit = refsCount > 0 ? 1 : 0;
         const total = meta.tokens.total;
+        // 语义缓存命中的回答 tokens 是缓存重放值而非真实消耗：
+        // 日统计 tokens 与用户月度用量均按 0 计入（防虚报成本），questions/hit/latency 照常
+        const billable = meta.cacheHit ? 0 : total;
         await this.prisma.$executeRaw`
           INSERT INTO daily_stats (date, questions, hit_count, avg_latency, tokens, active_users, created_at, updated_at)
-          VALUES (${today}::date, 1, ${hit}, ${elapsed}, ${total}, 1, NOW(), NOW())
+          VALUES (${today}::date, 1, ${hit}, ${elapsed}, ${billable}, 1, NOW(), NOW())
           ON CONFLICT (date) DO UPDATE SET
             questions = daily_stats.questions + 1,
             hit_count = daily_stats.hit_count + ${hit},
             avg_latency = (daily_stats.avg_latency * daily_stats.questions + ${elapsed}) / (daily_stats.questions + 1),
-            tokens = daily_stats.tokens + ${total},
+            tokens = daily_stats.tokens + ${billable},
             active_users = (
               SELECT COUNT(DISTINCT c.user_id) FROM messages m
               JOIN conversations c ON c.id = m.conversation_id
@@ -368,7 +380,7 @@ export class ChatService {
         const month = today.slice(0, 7);
         await this.prisma.$executeRaw`
           UPDATE users SET
-            monthly_token_used = CASE WHEN token_month = ${month} THEN monthly_token_used + ${total} ELSE ${total} END,
+            monthly_token_used = CASE WHEN token_month = ${month} THEN monthly_token_used + ${billable} ELSE ${billable} END,
             token_month = ${month}
           WHERE id = ${userId}`;
       }
@@ -388,6 +400,9 @@ export class ChatService {
           topP,
           maxTokens,
           forceCitation,
+          useCache,
+          cacheThreshold,
+          cacheTtlDays,
           ...(attachments.length ? { attachments } : {}),
         },
         abort.signal
@@ -408,6 +423,7 @@ export class ChatService {
             model: evt.data?.meta?.model || usedModel,
             elapsedMs: evt.data?.meta?.elapsedMs || Date.now() - startedAt,
             rewrittenQuery: evt.data?.meta?.rewrittenQuery ?? null,
+            cacheHit: evt.data?.meta?.cacheHit === true,
             tokens: {
               prompt: evt.data?.meta?.tokens?.prompt || 0,
               completion: evt.data?.meta?.tokens?.completion || 0,

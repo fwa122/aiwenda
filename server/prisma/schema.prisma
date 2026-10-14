@@ -342,6 +342,8 @@ model SystemSetting {
   security Json
   /// { vectorStore, vectorDim, embeddingModel, maxFileSize, ocrEnabled }
   storage Json
+  /// { enableSemanticCache, cacheThreshold, cacheTtlDays } 语义缓存（v0.9.40）
+  cache Json
   /// { zhipu?, qianwen?, moonshot? } 前端设置页配置的 LLM API Key（覆盖 ai-service/.env 默认值；接口返回一律脱敏，仅 admin 可写）
   apiKeys Json? @map("api_keys")
 

@@ -38,6 +38,13 @@
           <div class="s-foot">按内置公开定价估算，仅供参考</div>
         </div>
         <div class="stat-box">
+          <div class="s-label">缓存节省</div>
+          <div class="s-value accent">¥{{ cacheSavedCost.toFixed(2) }}</div>
+          <div class="s-foot">
+            {{ cost.cacheSaved?.hits || 0 }} 次命中 · 省 {{ formatNumber(cost.cacheSaved?.tokens || 0) }} tokens 重放
+          </div>
+        </div>
+        <div class="stat-box">
           <div class="s-label">满意度</div>
           <div class="s-value" :class="{ danger: fb.summary && fb.summary.satisfaction < 0.8 }">
             {{ pct(fb.summary?.satisfaction) }}
@@ -101,7 +108,7 @@
             </el-table-column>
           </el-table>
           <div class="panel-note">
-            未匹配定价的模型按兜底单价估算；输入 {{ '¥' + (defaultPrice[0]) }}/M、输出 {{ '¥' + defaultPrice[1] }}/M
+            未匹配定价的模型按兜底单价估算；输入 {{ '¥' + (defaultPrice[0]) }}/M、输出 {{ '¥' + defaultPrice[1] }}/M；语义缓存命中回答已剔除
           </div>
         </div>
 
@@ -327,6 +334,11 @@ function modelCost(row) {
 }
 
 const estCost = computed(() => (cost.value.byModel || []).reduce((s, r) => s + modelCost(r), 0))
+/** 缓存节省估算：重放 tokens 按兜底单价输入/输出均值折算（命中模型各异，取近似值） */
+const cacheSavedCost = computed(() => {
+  const tokens = cost.value.cacheSaved?.tokens || 0
+  return (tokens * ((defaultPrice[0] + defaultPrice[1]) / 2)) / 1e6
+})
 const ratedCount = computed(
   () => (fb.value.summary?.likes || 0) + (fb.value.summary?.dislikes || 0)
 )
@@ -379,6 +391,9 @@ function exportReport() {
   s.push(['问答次数', cost.value.total?.questions || 0])
   s.push(['Token 消耗', cost.value.total?.tokens || 0])
   s.push(['估算成本(元)', estCost.value.toFixed(2)])
+  s.push(['缓存命中次数', cost.value.cacheSaved?.hits || 0])
+  s.push(['缓存节省Tokens', cost.value.cacheSaved?.tokens || 0])
+  s.push(['缓存节省估算(元)', cacheSavedCost.value.toFixed(2)])
   s.push(['满意度', pct(fb.value.summary?.satisfaction)])
   s.push(['点赞', fb.value.summary?.likes || 0])
   s.push(['点踩', fb.value.summary?.dislikes || 0])
@@ -567,7 +582,7 @@ onMounted(loadAll)
 /* 概览卡片 */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 12px;
   margin-bottom: 20px;
 }

@@ -222,6 +222,7 @@ AI问答/
 
 | 版本 | 日期 | 主题 |
 | --- | --- | --- |
+| v0.9.41 | 2026-10-14 | 新功能·接入 MiniMax 大模型：第四家 LLM 渠道（api.minimax.cn OpenAI 兼容），选型 MiniMax-M2.5（¥2.1/¥8.4 每百万 tokens，同价档极致性价比）；M2.x 适配三件套——reasoning_split 拆思考防 `<think>` 污染正文、stream_options 补 usage 上报、max_tokens→max_completion_tokens+4096 思考余量；key 走统一 keystore（设置页管理/验证/清除），模型下拉 +3 项，成本看板补单价；设置页新增「模型接入说明」表格（由 provider/模型注册表聚合生成，新增渠道自动同步）；pytest 94 + 单测 68 全绿 + 全链路 SSE 与浏览器实测通过（MiniMax 无嵌入 API，嵌入仍走智谱/千问） |
 | v0.9.40 | 2026-10-14 | 新功能·答案语义缓存：answer_cache 表（kb_hash+question_norm 唯一去重、HNSW 近邻索引、7 天 TTL，advisory lock 幂等建表）+ /chat 一向量两用（查缓存与检索复用同次嵌入，未命中透传免二次嵌入）、命中毫秒级重放（meta.cacheHit）、仅单轮+有引用+非附件才缓存、yield 后写缓存天然保证完整答案；invalidate 接口 + 文档/库变更/重嵌入全挂钩失效；计费口径剔除重放值（月度用量 0 计）+ 看板「缓存节省」卡片与 cacheSaved 聚合；设置页缓存开关区；pytest 92 + 单测 68 + e2e 61 全绿（命中重放实测被嵌入 API 欠费阻塞，充值补测） |
 | v0.9.39 | 2026-10-13 | 新功能·问答反馈闭环：messages 加 feedback_reason（offtopic/citation/outdated/other）+ feedback_note（手写迁移）；点踩弹原因窗（未选禁用、再点预填改原因、like/null 清空）；看板差证明细加原因/差评人/引用文档/状态（reflowed 反查 hardcase）列，「转难例」预填回流对话框（默认首引用库、关键词启发式候选、备注自动生成）→ 评测页回归用例 → 明细标记已回流；stats e2e 12 例（总 58/58）+ 浏览器实测全链路绿 |
 | v0.9.38 | 2026-10-13 | 新功能·知识库成员管理：kb_members 表（editor 可写/viewer 只读，(kb_id,user_id) 唯一、级联删除，手写迁移）+ owner/admin 四个成员管理端点（按 username 邀请、候选下拉排除已有成员、memberCount 事务维护）；kb-access 写权限扩展为 owner ∪ admin ∪ editor、private 库成员可读（全调用点实时查库判定，列表标注 myRole）；配置 tab 成员管理区（搜索邀请/角色切换/移除）+ 列表卡片成员指标；kb-member e2e 14 例（总 52/52）+ 浏览器实测全流程绿 |

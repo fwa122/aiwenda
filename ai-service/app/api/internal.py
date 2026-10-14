@@ -629,7 +629,7 @@ def chat_title(body: TitleRequest):
 # ============================== 运行时 API Key ==============================
 
 class KeyVerifyRequest(BaseModel):
-    provider: str = Field(pattern='^(zhipu|qianwen|moonshot)$')
+    provider: str = Field(pattern='^(zhipu|qianwen|moonshot|minimax)$')
     key: str | None = None  # 传入时验证该值（保存前预检）；缺省验证当前生效 key
 
 

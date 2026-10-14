@@ -70,6 +70,7 @@ def test_presence_source_db_env_none(monkeypatch):
     monkeypatch.setattr(settings, 'zhipu_api_key', 'env-zhipu')
     monkeypatch.setattr(settings, 'qianwen_api_key', '')
     monkeypatch.setattr(settings, 'moonshot_api_key', '')  # 屏蔽本地 .env 实际配置
+    monkeypatch.setattr(settings, 'minimax_api_key', '')
     monkeypatch.setattr(
         keystore, 'fetch_one', lambda sql, params=None: {'api_keys': {'qianwen': 'db-qw'}}
     )
@@ -77,3 +78,13 @@ def test_presence_source_db_env_none(monkeypatch):
     assert p['zhipu'] == {'configured': True, 'source': 'env'}
     assert p['qianwen'] == {'configured': True, 'source': 'db'}
     assert p['moonshot'] == {'configured': False, 'source': 'none'}
+
+
+def test_minimax_provider_registered(monkeypatch):
+    """minimax 渠道走统一 keystore：DB 覆盖 > .env（MINIMAX_API_KEY）"""
+    monkeypatch.setattr(settings, 'minimax_api_key', '')
+    monkeypatch.setattr(
+        keystore, 'fetch_one', lambda sql, params=None: {'api_keys': {'minimax': 'db-mm'}}
+    )
+    assert keystore.resolve_key('minimax') == 'db-mm'
+    assert keystore.presence()['minimax'] == {'configured': True, 'source': 'db'}

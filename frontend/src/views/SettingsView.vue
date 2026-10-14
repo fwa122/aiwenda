@@ -63,6 +63,37 @@
                 <span class="form-hint">保存后全链路（问答/嵌入/精排/OCR）即时生效，无需重启服务</span>
               </el-form-item>
             </template>
+            <!-- 模型接入说明：与 llmModels / API_KEY_PROVIDERS 数据联动，新增渠道或模型后本表自动同步 -->
+            <el-divider content-position="left">模型接入说明</el-divider>
+            <el-form-item label=" ">
+              <div class="model-guide">
+                <p class="form-tip">
+                  对话模型在聊天页右上角下拉选择；渠道 Key 在上方「API Key 管理」配置，未配置时回落服务端
+                  .env。嵌入 / Rerank / OCR 为独立渠道（智谱、千问），由服务端 .env 配置。后续新增渠道或模型会同步更新本表。
+                </p>
+                <el-table :data="modelGuide" size="small" border>
+                  <el-table-column label="渠道" width="170">
+                    <template #default="{ row }">
+                      <div class="guide-provider">{{ row.name }}</div>
+                      <div class="guide-env">{{ row.envKey }}</div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="可接入模型" min-width="280">
+                    <template #default="{ row }">
+                      <el-tag
+                        v-for="m in row.models"
+                        :key="m"
+                        size="small"
+                        effect="plain"
+                        class="guide-model-tag"
+                      >{{ m }}</el-tag>
+                      <span v-if="!row.models.length" class="text-muted">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="用途说明" min-width="220" prop="desc" />
+                </el-table>
+              </div>
+            </el-form-item>
             <el-form-item label="温度 Temperature">
               <el-slider v-model="settings.model.temperature" :min="0" :max="1" :step="0.1" style="width: 320px" />
               <span class="form-hint">{{ settings.model.temperature.toFixed(1) }} · 越小越严谨</span>
@@ -511,7 +542,7 @@ import {
   deleteUser,
   getOperationLogs
 } from '@/api/user'
-import { llmModels, embeddingModels, vectorStores } from '@/mock/knowledge'
+import { llmModels, embeddingModels, vectorStores, llmProviderMeta } from '@/mock/knowledge'
 import { formatNumber } from '@/utils/format'
 import { clone } from '@/utils/format'
 
@@ -607,13 +638,25 @@ async function saveSettings() {
 const API_KEY_PROVIDERS = [
   { key: 'zhipu', label: '智谱', hint: 'GLM 对话 / embedding / rerank / OCR（OpenAI 兼容）' },
   { key: 'qianwen', label: '通义千问', hint: 'qwen/deepseek 对话 / qwen embedding（DashScope）' },
-  { key: 'moonshot', label: 'Kimi', hint: 'kimi/moonshot 对话（Moonshot 开放平台）' }
+  { key: 'moonshot', label: 'Kimi', hint: 'kimi/moonshot 对话（Moonshot 开放平台）' },
+  { key: 'minimax', label: 'MiniMax', hint: 'MiniMax-M2.x 对话（MiniMax 开放平台，OpenAI 兼容）' }
 ]
 
+/** 模型接入说明表：渠道元信息 + llmModels 注册表聚合（新增渠道/模型自动同步到该表） */
+const modelGuide = computed(() =>
+  API_KEY_PROVIDERS.map((p) => ({
+    key: p.key,
+    name: llmProviderMeta[p.key]?.name || p.label,
+    envKey: llmProviderMeta[p.key]?.envKey || '',
+    desc: p.hint,
+    models: llmModels.filter((m) => m.provider === p.key).map((m) => m.value)
+  }))
+)
+
 /** 脱敏状态（GET /settings 返回）：{configured, tail, source} */
-const apiKeyState = reactive({ zhipu: null, qianwen: null, moonshot: null })
+const apiKeyState = reactive({ zhipu: null, qianwen: null, moonshot: null, minimax: null })
 /** 新输入的 key（仅保存时提交，不回显明文） */
-const apiKeyInputs = reactive({ zhipu: '', qianwen: '', moonshot: '' })
+const apiKeyInputs = reactive({ zhipu: '', qianwen: '', moonshot: '', minimax: '' })
 const keySaving = ref(false)
 const keyVerifying = ref('')
 
@@ -651,6 +694,7 @@ async function saveApiKeys() {
     apiKeyInputs.zhipu = ''
     apiKeyInputs.qianwen = ''
     apiKeyInputs.moonshot = ''
+    apiKeyInputs.minimax = ''
     await Promise.all([loadSettings(), loadRuntimeModel()])
   } finally {
     keySaving.value = false
@@ -1050,6 +1094,24 @@ onUnmounted(() => {
   margin-top: 4px;
   font-size: 11.5px;
   color: var(--c-text-4);
+}
+
+.model-guide {
+  width: 100%;
+}
+
+.guide-provider {
+  font-weight: 600;
+}
+
+.guide-env {
+  font-size: 11.5px;
+  font-family: ui-monospace, monospace;
+  color: var(--c-text-4);
+}
+
+.guide-model-tag {
+  margin: 2px 6px 2px 0;
 }
 
 .sub-card {

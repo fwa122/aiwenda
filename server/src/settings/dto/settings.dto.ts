@@ -20,6 +20,11 @@ export class ApiKeysDto {
   @IsString()
   @MaxLength(300)
   moonshot?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  minimax?: string;
 }
 
 /**
@@ -55,8 +60,8 @@ export class UpdateSettingsDto {
 
 /** key 有效性验证（保存前预检 / 现网生效值复检） */
 export class VerifyKeyDto {
-  @IsIn(['zhipu', 'qianwen', 'moonshot'])
-  provider!: 'zhipu' | 'qianwen' | 'moonshot';
+  @IsIn(['zhipu', 'qianwen', 'moonshot', 'minimax'])
+  provider!: 'zhipu' | 'qianwen' | 'moonshot' | 'minimax';
 
   @IsOptional()
   @IsString()

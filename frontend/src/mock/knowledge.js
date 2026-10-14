@@ -431,14 +431,25 @@ export const embeddingModels = [
   { value: 'Conan-embedding-v1', label: 'Conan-embedding-v1（中文长文本）' }
 ]
 
-/** 可选推理模型（与 ai-service 模型注册表对齐：qwen 与 deepseek 前缀走千问，glm 前缀走智谱，kimi 前缀走 Moonshot；未注册名会被回落默认） */
+/** 可选推理模型（与 ai-service 模型注册表对齐：qwen 与 deepseek 前缀走千问，glm 前缀走智谱，kimi 前缀走 Moonshot，minimax 前缀走 MiniMax；未注册名会被回落默认） */
 export const llmModels = [
   { value: 'qwen3.8-max', label: 'Qwen3.8-Max（千问）', provider: 'qianwen' },
   { value: 'qwen3.7-flash', label: 'Qwen3.7-Flash（千问）', provider: 'qianwen' },
   { value: 'deepseek-v4-pro-0813', label: 'DeepSeek-V4-Pro（千问平台）', provider: 'qianwen' },
   { value: 'glm-4-flash', label: 'GLM-4-Flash（智谱）', provider: 'zhipu' },
-  { value: 'kimi-k2.6', label: 'Kimi K2.6（月之暗面）', provider: 'moonshot' }
+  { value: 'kimi-k2.6', label: 'Kimi K2.6（月之暗面）', provider: 'moonshot' },
+  { value: 'MiniMax-M2.5', label: 'MiniMax-M2.5（MiniMax，高性价比）', provider: 'minimax' },
+  { value: 'MiniMax-M2.5-highspeed', label: 'MiniMax-M2.5-Highspeed（MiniMax，极速）', provider: 'minimax' },
+  { value: 'MiniMax-M2.7', label: 'MiniMax-M2.7（MiniMax）', provider: 'minimax' }
 ]
+
+/** LLM 渠道元信息（模型接入说明用，与 llmModels.provider 关联；新增渠道在此登记即可自动同步到设置页说明） */
+export const llmProviderMeta = {
+  zhipu: { name: '智谱 BigModel', envKey: 'ZHIPU_API_KEY', desc: 'GLM 对话 / embedding / rerank / OCR（OpenAI 兼容）' },
+  qianwen: { name: '通义千问 DashScope', envKey: 'QIANWEN_API_KEY', desc: 'qwen/deepseek 对话 / qwen embedding（OpenAI 兼容）' },
+  moonshot: { name: '月之暗面 Moonshot', envKey: 'MOONSHOT_API_KEY', desc: 'kimi/moonshot 对话（OpenAI 兼容）' },
+  minimax: { name: 'MiniMax 开放平台', envKey: 'MINIMAX_API_KEY', desc: 'MiniMax-M2.x 对话，仅对话生成无嵌入 API（OpenAI 兼容）' }
+}
 
 /** 可选解析策略 */
 export const parserOptions = [

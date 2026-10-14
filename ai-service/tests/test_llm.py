@@ -38,6 +38,28 @@ def test_missing_key_raises_readable_error(monkeypatch):
         llm._get_client('zhipu')
     with pytest.raises(ValueError, match='MOONSHOT_API_KEY 未配置'):
         llm._get_client('moonshot')
+    with pytest.raises(ValueError, match='MINIMAX_API_KEY 未配置'):
+        llm._get_client('minimax')
+
+
+def test_minimax_routing_and_kwargs(monkeypatch):
+    """minimax 前缀路由到 minimax provider；特殊参数：reasoning_split + usage 上报 + 思考余量"""
+    monkeypatch.setattr(llm, 'resolve_key', lambda p: 'mm-key')
+    assert llm.resolve_provider('MiniMax-M2.5') == 'minimax'
+    assert llm.resolve_provider('minimax-m2.7-highspeed') == 'minimax'
+
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return iter([])
+
+    monkeypatch.setattr(llm._get_client('minimax').chat.completions, 'create', fake_create)
+    list(llm.stream_chat([{'role': 'user', 'content': 'hi'}], model='MiniMax-M2.5', max_tokens=2048))
+    assert captured['model'] == 'MiniMax-M2.5'
+    assert captured['extra_body'] == {'reasoning_split': True, 'stream_options': {'include_usage': True}}
+    assert 'max_tokens' not in captured  # 已转换为 max_completion_tokens
+    assert captured['max_completion_tokens'] == 2048 + 4096
 
 
 def test_cache_eviction_on_key_churn(monkeypatch):

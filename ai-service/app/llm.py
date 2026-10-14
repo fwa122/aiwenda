@@ -1,4 +1,4 @@
-"""LLM：OpenAI 兼容多 Provider（智谱 GLM / Moonshot Kimi / Qianwen 千问）
+"""LLM：OpenAI 兼容多 Provider（智谱 GLM / Moonshot Kimi / Qianwen 千问 / MiniMax）
 
 仅对话生成层多 Provider；Embedding 走 embedding.py（provider 可配），Rerank/OCR 固定智谱。
 路由规则：按模型名前缀匹配注册表，未识别的模型回落全局默认（llm_model）。
@@ -15,6 +15,7 @@ PROVIDER_PREFIXES: dict[str, str] = {
     'moonshot': 'moonshot',
     'qwen': 'qianwen',
     'deepseek': 'qianwen',  # 千问平台的 deepseek-v4-pro 走 dashscope 兼容端点
+    'minimax': 'minimax',   # MiniMax-M2.x 系列（api.minimax.cn，OpenAI 兼容）
 }
 
 # 缓存键 (provider, key)：key 由 keystore 动态解析（DB 覆盖 > .env），换 key 自动建新 client
@@ -58,6 +59,14 @@ def _get_client(provider: str) -> OpenAI:
             base_url=settings.moonshot_base_url,
             timeout=60.0,
         )
+    elif provider == 'minimax':
+        if not key:
+            raise ValueError('MINIMAX_API_KEY 未配置')
+        client = OpenAI(
+            api_key=key,
+            base_url=settings.minimax_base_url,
+            timeout=60.0,
+        )
     else:
         if not key:
             raise ValueError('ZHIPU_API_KEY 未配置')
@@ -89,6 +98,15 @@ def _apply_provider_kwargs(kwargs: dict, provider: str) -> None:
         # SSE 界面回答前长空白且白耗 token；实测关闭后三模型（qwen3.8-max /
         # qwen3.7-flash / deepseek-v4-pro）均干净直出
         kwargs['extra_body'] = {'enable_thinking': False}
+    elif provider == 'minimax':
+        # M2.x 思考无法关闭，默认 <think> 混在 content 里会污染 SSE 正文与引用解析；
+        # reasoning_split=true 把思考拆到 reasoning_content（本服务只透传 delta.content，
+        # 思考内容天然被丢弃）。实测 v0.9.41：正文干净、思考 600+ 字符全隔离
+        kwargs['extra_body'] = {'reasoning_split': True, 'stream_options': {'include_usage': True}}
+        # max_tokens 含思考 token（官方文档：设置过小正文为空）——转 max_completion_tokens
+        # 并追加思考余量，实际按用量计费，放大上限不影响成本
+        if kwargs.get('max_tokens'):
+            kwargs['max_completion_tokens'] = int(kwargs.pop('max_tokens')) + 4096
 
 
 def stream_chat(

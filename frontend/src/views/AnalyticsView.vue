@@ -310,7 +310,10 @@ const MODEL_PRICES = {
   'qwen3.7-flash': [0.15, 0.75],
   'qwen3.8-max': [2.4, 9.6],
   'deepseek-v4-pro': [2, 8],
-  'kimi-k2.6': [4, 16]
+  'kimi-k2.6': [4, 16],
+  'MiniMax-M2.5': [2.1, 8.4],
+  'MiniMax-M2.7': [2.1, 8.4],
+  'MiniMax-M2.5-highspeed': [4.2, 16.8]
 }
 /** 未收录模型的兜底单价 */
 const defaultPrice = [2, 8]

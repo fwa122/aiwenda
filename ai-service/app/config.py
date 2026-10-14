@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # K2.6 思考模式：disabled 保证问答响应速度；enabled 时思考内容不进 SSE 正文（回答前长空白）
     moonshot_thinking: str = 'disabled'  # disabled | enabled
 
+    # MiniMax（OpenAI 兼容；仅对话生成，无嵌入 API）
+    minimax_api_key: str = ''
+    minimax_base_url: str = 'https://api.minimax.cn/v1'
+
     # Qianwen / DashScope（OpenAI 兼容；对话 + 嵌入均可）
     qianwen_api_key: str = ''
     qianwen_base_url: str = 'https://dashscope.aliyuncs.com/compatible-mode/v1'

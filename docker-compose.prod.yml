@@ -102,6 +102,9 @@ services:
       # Qianwen / DashScope（生成 + 向量）
       - QIANWEN_API_KEY=${QIANWEN_API_KEY}
       - QIANWEN_BASE_URL=${QIANWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      # MiniMax（可选生成模型，OpenAI 兼容；仅对话无嵌入）
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+      - MINIMAX_BASE_URL=${MINIMAX_BASE_URL:-https://api.minimax.cn/v1}
       # 向量 / 默认生成参数
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-zhipu}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embedding-3}

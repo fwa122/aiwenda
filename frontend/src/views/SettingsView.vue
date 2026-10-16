@@ -439,6 +439,45 @@
           </el-table>
         </el-tab-pane>
 
+        <!-- 部门管理 -->
+        <el-tab-pane v-if="isAdmin" label="部门管理" name="departments">
+          <div class="tab-bar">
+            <span class="form-hint">组织树用于数据范围隔离：先建部门，再把用户指派进来</span>
+            <el-button type="primary" @click="openDeptDialog()">
+              <el-icon><Plus /></el-icon>新建根部门
+            </el-button>
+          </div>
+
+          <el-table
+            v-loading="deptLoading"
+            :data="deptTree"
+            row-key="id"
+            :tree-props="{ children: 'children' }"
+            default-expand-all
+            style="width: 100%"
+          >
+            <el-table-column label="部门" min-width="200">
+              <template #default="{ row }">
+                <div>{{ row.name }}</div>
+                <div class="u-sub text-muted dept-id">{{ row.id }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="成员数" width="90" prop="memberCount" />
+            <el-table-column label="负责人" width="120">
+              <template #default="{ row }">{{ userNameMap[row.leaderId] || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="260" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="openMembersDialog(row)">成员</el-button>
+                <el-button link type="primary" size="small" @click="openDeptDialog(null, row)">加子部门</el-button>
+                <el-button link type="primary" size="small" @click="openMoveDialog(row)">移动</el-button>
+                <el-button link type="primary" size="small" @click="openDeptDialog(row)">编辑</el-button>
+                <el-button link type="danger" size="small" @click="handleDeleteDept(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+
         <!-- 操作日志 -->
         <el-tab-pane label="操作日志" name="logs">
           <el-table v-loading="logLoading" :data="logs" style="width: 100%">
@@ -518,6 +557,95 @@
         <el-button type="primary" @click="handleSaveUser">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 新建/编辑部门 -->
+    <el-dialog v-model="deptDialog" :title="deptForm.id ? '编辑部门' : '新建部门'" width="460px">
+      <el-form :model="deptForm" label-width="90px">
+        <el-form-item label="部门名称" required>
+          <el-input v-model="deptForm.name" maxlength="64" placeholder="例如：生鲜事业部" />
+        </el-form-item>
+        <el-form-item label="上级部门">
+          <el-input :model-value="deptForm.parentName" disabled />
+        </el-form-item>
+        <el-form-item v-if="deptForm.id" label="负责人">
+          <el-select v-model="deptForm.leaderId" clearable filterable style="width: 100%">
+            <el-option v-for="u in userOptions" :key="u.id" :label="u.nickname || u.username" :value="u.id" />
+          </el-select>
+          <span class="form-hint">负责人必须是本部门成员（先在「成员」里指派）</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="deptDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveDept">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 移动部门 -->
+    <el-dialog v-model="moveDialog" :title="`移动「${moveForm.name}」`" width="420px">
+      <el-form label-width="90px">
+        <el-form-item label="目标上级">
+          <el-tree-select
+            v-model="moveForm.parentId"
+            :data="moveTree"
+            check-strictly
+            clearable
+            default-expand-all
+            placeholder="不选即移到根级"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
+      <span class="form-hint">自身及其子部门不可作为目标；清空选择即移到根级</span>
+      <template #footer>
+        <el-button @click="moveDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleMoveDept">确定移动</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 部门成员管理 -->
+    <el-dialog v-model="membersDialog" :title="`成员管理 · ${memberDept?.name || ''}`" width="640px">
+      <div class="tab-bar member-add-bar">
+        <el-select v-model="memberForm.userId" filterable placeholder="选择要指派的用户" style="width: 240px">
+          <el-option
+            v-for="u in addableUsers"
+            :key="u.id"
+            :label="`${u.nickname || u.username}（@${u.username}）`"
+            :value="u.id"
+          />
+        </el-select>
+        <el-checkbox v-model="memberForm.isPrimary">设为主部门</el-checkbox>
+        <el-button type="primary" :disabled="!memberForm.userId" @click="handleAddMember">添加</el-button>
+      </div>
+
+      <el-table v-loading="memberLoading" :data="members" max-height="360" style="width: 100%">
+        <el-table-column label="用户" min-width="150">
+          <template #default="{ row }">
+            <div>{{ row.user?.nickname || row.user?.username }}</div>
+            <div class="u-sub text-muted">@{{ row.user?.username }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="角色" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.user?.role === 'admin' ? 'danger' : row.user?.role === 'editor' ? 'primary' : 'info'" size="small" effect="light">
+              {{ row.user?.role === 'admin' ? '超级管理员' : row.user?.role === 'editor' ? '知识库编辑' : '只读访客' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="归属" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.isPrimary ? 'success' : 'info'" size="small" effect="light">
+              {{ row.isPrimary ? '主部门' : '兼职' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="加入时间" width="170" prop="joinedAt" />
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="danger" size="small" @click="handleRemoveMember(row)">移除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -542,6 +670,16 @@ import {
   deleteUser,
   getOperationLogs
 } from '@/api/user'
+import {
+  getDeptTree,
+  createDepartment,
+  updateDepartment,
+  moveDepartment,
+  deleteDepartment,
+  getDeptMembers,
+  addDeptMember,
+  removeDeptMember
+} from '@/api/department'
 import { llmModels, embeddingModels, vectorStores, llmProviderMeta } from '@/mock/knowledge'
 import { formatNumber } from '@/utils/format'
 import { clone } from '@/utils/format'
@@ -996,6 +1134,175 @@ async function handleDeleteUser(row) {
   }
 }
 
+/* ---------------- 部门管理 ---------------- */
+const deptTree = ref([])
+const deptLoading = ref(false)
+// 管理端用户摘要：负责人显示 + 成员指派下拉共用
+const userOptions = ref([])
+
+const deptDialog = ref(false)
+const deptForm = reactive({ id: '', name: '', parentId: null, parentName: '', leaderId: '' })
+
+const moveDialog = ref(false)
+const moveForm = reactive({ id: '', name: '', parentId: undefined })
+
+const membersDialog = ref(false)
+const memberLoading = ref(false)
+const members = ref([])
+const memberDept = ref(null)
+const memberForm = reactive({ userId: '', isPrimary: false })
+
+const userNameMap = computed(() => {
+  const map = {}
+  userOptions.value.forEach((u) => {
+    map[u.id] = u.nickname || u.username
+  })
+  return map
+})
+
+// 成员指派下拉：过滤已在当前部门的人
+const addableUsers = computed(() =>
+  userOptions.value.filter((u) => !members.value.some((m) => m.userId === u.id))
+)
+
+// 移动目标树：剔除自身子树（后端同样有成环校验，这里是交互层保险）
+const moveTree = computed(() => buildMoveTree(deptTree.value, moveForm.id))
+
+function buildMoveTree(nodes, excludeId) {
+  const out = []
+  for (const n of nodes || []) {
+    if (n.id === excludeId) continue
+    out.push({ value: n.id, label: n.name, children: buildMoveTree(n.children, excludeId) })
+  }
+  return out
+}
+
+function findDeptName(nodes, id) {
+  for (const n of nodes || []) {
+    if (n.id === id) return n.name
+    const hit = findDeptName(n.children, id)
+    if (hit) return hit
+  }
+  return ''
+}
+
+async function loadDepts() {
+  deptLoading.value = true
+  try {
+    deptTree.value = await getDeptTree()
+  } finally {
+    deptLoading.value = false
+  }
+}
+
+async function loadUserOptions() {
+  const res = await getUsers({ page: 1, pageSize: 500 })
+  userOptions.value = res.list || []
+}
+
+function openDeptDialog(row, parentRow) {
+  Object.assign(deptForm, {
+    id: row?.id || '',
+    name: row?.name || '',
+    parentId: row ? row.parentId || null : parentRow?.id || null,
+    parentName: row
+      ? row.parentId
+        ? findDeptName(deptTree.value, row.parentId) || '根级'
+        : '根级'
+      : parentRow?.name || '根级',
+    leaderId: row?.leaderId || ''
+  })
+  deptDialog.value = true
+}
+
+async function handleSaveDept() {
+  if (!deptForm.name.trim()) {
+    ElMessage.warning('请输入部门名称')
+    return
+  }
+  if (deptForm.id) {
+    await updateDepartment(deptForm.id, { name: deptForm.name.trim(), leaderId: deptForm.leaderId || '' })
+  } else {
+    await createDepartment({ name: deptForm.name.trim(), parentId: deptForm.parentId || undefined })
+  }
+  ElMessage.success('保存成功')
+  deptDialog.value = false
+  await loadDepts()
+}
+
+function openMoveDialog(row) {
+  Object.assign(moveForm, { id: row.id, name: row.name, parentId: row.parentId || undefined })
+  moveDialog.value = true
+}
+
+async function handleMoveDept() {
+  // 清空选择（undefined）= 移到根级，后端约定 null
+  await moveDepartment(moveForm.id, moveForm.parentId ?? null)
+  ElMessage.success('已移动')
+  moveDialog.value = false
+  await loadDepts()
+}
+
+async function handleDeleteDept(row) {
+  try {
+    await ElMessageBox.confirm(`确定删除部门「${row.name}」吗？（需先移出子部门与成员）`, '删除部门', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
+    })
+    await deleteDepartment(row.id)
+    ElMessage.success('已删除')
+    await loadDepts()
+  } catch (e) {
+    /* 取消 */
+  }
+}
+
+async function openMembersDialog(row) {
+  memberDept.value = row
+  Object.assign(memberForm, { userId: '', isPrimary: false })
+  membersDialog.value = true
+  await loadMembers()
+}
+
+async function loadMembers() {
+  if (!memberDept.value) return
+  memberLoading.value = true
+  try {
+    const res = await getDeptMembers(memberDept.value.id, { page: 1, pageSize: 100 })
+    members.value = res.list || []
+  } finally {
+    memberLoading.value = false
+  }
+}
+
+async function handleAddMember() {
+  if (!memberForm.userId) return
+  await addDeptMember(memberDept.value.id, {
+    userId: memberForm.userId,
+    isPrimary: memberForm.isPrimary || undefined
+  })
+  ElMessage.success('已添加')
+  Object.assign(memberForm, { userId: '', isPrimary: false })
+  await Promise.all([loadMembers(), loadDepts()])
+}
+
+async function handleRemoveMember(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定将「${row.user?.nickname || row.user?.username}」移出该部门吗？`,
+      '移除成员',
+      { type: 'warning', confirmButtonText: '移除', cancelButtonText: '取消' }
+    )
+    await removeDeptMember(memberDept.value.id, row.userId)
+    ElMessage.success('已移除')
+    await Promise.all([loadMembers(), loadDepts()])
+  } catch (e) {
+    /* 取消 */
+  }
+}
+
 /* ---------------- 操作日志 ---------------- */
 const logs = ref([])
 const logLoading = ref(false)
@@ -1017,11 +1324,12 @@ onMounted(async () => {
     knowledgeStore.fetchOptions(),
     loadKeys(),
     loadUsers(),
+    loadDepts(),
     loadLogs()
   ])
   if (!userStore.profile) await userStore.fetchProfile()
   // admin 专属：嵌入渠道状态（依赖 profile.role 判定，故在 fetchProfile 之后）
-  if (isAdmin.value) await loadEmbeddingState()
+  if (isAdmin.value) await Promise.all([loadEmbeddingState(), loadUserOptions()])
 })
 
 onUnmounted(() => {
@@ -1132,6 +1440,16 @@ onUnmounted(() => {
   gap: 16px;
   margin-bottom: 14px;
   font-size: 13px;
+}
+
+/* 部门管理 */
+.dept-id {
+  font-size: 12px;
+}
+
+.member-add-bar {
+  justify-content: flex-start;
+  margin-bottom: 12px;
 }
 
 .user-cell {

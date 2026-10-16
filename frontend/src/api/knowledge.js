@@ -93,7 +93,7 @@ export function createKnowledge(payload) {
         hybrid: payload.hybrid ?? true
       },
       llm: payload.llm || { provider: 'qwen', model: 'qwen2.5-72b-instruct', temperature: 0.3 },
-      visibility: payload.visibility || 'internal',
+      visibility: payload.visibility || 'PRIVATE',
       owner: '当前用户',
       memberCount: 1,
       createdAt: new Date().toISOString().slice(0, 19).replace('T', ' '),

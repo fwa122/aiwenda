@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsBoolean,
   IsObject,
+  IsIn,
   Min,
   Max,
 } from 'class-validator';
@@ -89,8 +90,13 @@ export class CreateKbDto {
   llm?: Record<string, any>;
 
   @IsOptional()
+  @IsIn(['PRIVATE', 'DEPT', 'PUBLIC'])
+  visibility?: 'PRIVATE' | 'DEPT' | 'PUBLIC';
+
+  // 归属部门（DEPT 可见性范围依据）：显式指定优先，缺省取创建人主部门
+  @IsOptional()
   @IsString()
-  visibility?: string;
+  orgId?: string | null;
 }
 
 /**
@@ -173,6 +179,11 @@ export class UpdateKbDto {
   llm?: Record<string, any>;
 
   @IsOptional()
+  @IsIn(['PRIVATE', 'DEPT', 'PUBLIC'])
+  visibility?: 'PRIVATE' | 'DEPT' | 'PUBLIC';
+
+  // 归属部门（DEPT 可见性范围依据）；空串/null 清除。仅 owner / admin 可改
+  @IsOptional()
   @IsString()
-  visibility?: string;
+  orgId?: string | null;
 }

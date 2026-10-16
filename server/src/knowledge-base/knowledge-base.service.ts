@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { genId } from '../common/id.util';
+import { isKbDeptVisible, visibleDeptIds } from '../common/dept-scope';
 import { canReadKb, canWriteKb, SessionUser } from '../common/kb-access';
+import { hasAllScope } from '../common/rbac';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiServiceClient } from '../integrations/ai-service.client';
 import { CreateKbDto, UpdateKbDto } from './dto/knowledge-base.dto';
@@ -54,16 +56,24 @@ export class KnowledgeBaseService {
     };
   }
 
-  /** 列表/下拉可见性过滤：admin 全可见；普通用户可见 internal/public + 自己的 private + 自己所在的成员库 */
-  private visibilityFilter(user: SessionUser): Prisma.KnowledgeBaseWhereInput {
-    if (user.role === 'admin') return {};
-    return {
-      OR: [
-        { userId: user.id },
-        { visibility: { not: 'private' } },
-        { members: { some: { userId: user.id } } },
-      ],
-    };
+  /** 列表/下拉可见性过滤：超管全可见；普通用户可见 PUBLIC + DEPT(可见部门) + 自己的 + 所在成员库 */
+  private visibilityFilter(
+    user: SessionUser,
+    deptIds: string[]
+  ): Prisma.KnowledgeBaseWhereInput {
+    if (hasAllScope(user)) return {};
+    const or: Prisma.KnowledgeBaseWhereInput[] = [
+      { userId: user.id },
+      { visibility: 'PUBLIC' },
+      { members: { some: { userId: user.id } } },
+    ];
+    if (deptIds.length) or.push({ visibility: 'DEPT', orgId: { in: deptIds } });
+    return { OR: or };
+  }
+
+  /** 普通用户的可见部门 id 集（超管免查） */
+  private deptScope(user: SessionUser): Promise<string[]> {
+    return hasAllScope(user) ? Promise.resolve([]) : visibleDeptIds(this.prisma, user.id);
   }
 
   /** 当前用户在某库的成员角色（非成员为 null），实时查库——移除后权限立即失效 */
@@ -79,13 +89,15 @@ export class KnowledgeBaseService {
     user: SessionUser,
     memberRole: string | null
   ): string | null {
-    if (user.role === 'admin') return 'admin';
+    if (hasAllScope(user)) return 'admin';
     if (kb.userId === user.id) return 'owner';
     return memberRole;
   }
 
   async list(query: { keyword?: string; status?: string; page?: number; pageSize?: number }, user: SessionUser) {
-    const and: Prisma.KnowledgeBaseWhereInput[] = [this.visibilityFilter(user)];
+    const and: Prisma.KnowledgeBaseWhereInput[] = [
+      this.visibilityFilter(user, await this.deptScope(user)),
+    ];
     if (query.keyword) {
       and.push({
         OR: [
@@ -112,7 +124,7 @@ export class KnowledgeBaseService {
 
     // 批量取当前用户在页内各库的成员角色（防 N+1），标注 myRole 供前端写入口判断
     let roleMap = new Map<string, string>();
-    if (user.role !== 'admin' && list.length) {
+    if (!hasAllScope(user) && list.length) {
       const memberships = await this.prisma.kbMember.findMany({
         where: { kbId: { in: list.map((k) => k.id) }, userId: user.id },
         select: { kbId: true, role: true },
@@ -134,7 +146,7 @@ export class KnowledgeBaseService {
   /** 已就绪知识库（供问答页下拉选择） */
   async options(user: SessionUser) {
     const list = await this.prisma.knowledgeBase.findMany({
-      where: { status: 'ready', AND: [this.visibilityFilter(user)] },
+      where: { status: 'ready', AND: [this.visibilityFilter(user, await this.deptScope(user))]},
       select: {
         id: true,
         name: true,
@@ -153,12 +165,30 @@ export class KnowledgeBaseService {
       this.memberRoleOf(id, user.id),
     ]);
     if (!kb) throw new NotFoundException('知识库不存在');
-    if (!canReadKb(kb, user, memberRole)) throw new ForbiddenException('无权访问该知识库');
+    const deptVisible = await isKbDeptVisible(this.prisma, user.id, kb.orgId);
+    if (!canReadKb(kb, user, memberRole, deptVisible)) throw new ForbiddenException('无权访问该知识库');
     return { ...kb, myRole: this.resolveMyRole(kb, user, memberRole) };
   }
 
   async create(dto: CreateKbDto, user: SessionUser) {
     const config = this.buildConfig(dto);
+    // 归属部门（DEPT 可见性的范围依据）：显式指定优先（校验存在），
+    // 缺省取创建人主部门，无部门则置空
+    let orgId: string | null;
+    if (dto.orgId) {
+      const dept = await this.prisma.department.findUnique({
+        where: { id: dto.orgId },
+        select: { id: true },
+      });
+      if (!dept) throw new BadRequestException('归属部门不存在');
+      orgId = dto.orgId;
+    } else {
+      const primary = await this.prisma.userDepartment.findFirst({
+        where: { userId: user.id, isPrimary: true },
+        select: { deptId: true },
+      });
+      orgId = primary?.deptId ?? null;
+    }
     const kb = await this.prisma.knowledgeBase.create({
       data: {
         id: genId('kb'),
@@ -172,7 +202,8 @@ export class KnowledgeBaseService {
         chunkSize: dto.chunkSize ?? 512,
         chunkOverlap: dto.chunkOverlap ?? 64,
         parser: dto.parser ?? 'smart',
-        visibility: dto.visibility ?? 'internal',
+        visibility: dto.visibility ?? 'PRIVATE',
+        orgId,
         owner: user.username,
         userId: user.id,
         memberCount: 1,
@@ -196,6 +227,22 @@ export class KnowledgeBaseService {
   async update(id: string, dto: UpdateKbDto, user: SessionUser) {
     const { kb: existing, memberRole } = await this.assertWritable(id, user);
 
+    // 可见范围（visibility/orgId）仅 owner / 超管可调：editor 可编辑内容，但不能扩大人群
+    if (
+      (dto.visibility !== undefined || dto.orgId !== undefined) &&
+      existing.userId !== user.id &&
+      !hasAllScope(user)
+    ) {
+      throw new ForbiddenException('仅所有者或管理员可修改可见范围');
+    }
+    if (dto.orgId) {
+      const dept = await this.prisma.department.findUnique({
+        where: { id: dto.orgId },
+        select: { id: true },
+      });
+      if (!dept) throw new BadRequestException('归属部门不存在');
+    }
+
     const config = this.buildConfig(dto, {
       retrieverConfig: existing.retrieverConfig,
       llmConfig: existing.llmConfig,
@@ -213,6 +260,8 @@ export class KnowledgeBaseService {
     if (dto.chunkOverlap !== undefined) data.chunkOverlap = dto.chunkOverlap;
     if (dto.parser !== undefined) data.parser = dto.parser;
     if (dto.visibility !== undefined) data.visibility = dto.visibility;
+    // 传空串/null 视为清除归属部门
+    if (dto.orgId !== undefined) data.orgId = dto.orgId || null;
     data.retrieverConfig = config.retrieverConfig;
     data.llmConfig = config.llmConfig;
 

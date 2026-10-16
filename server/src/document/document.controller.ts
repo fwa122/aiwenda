@@ -120,7 +120,7 @@ export class DocumentController {
     res.setHeader('Content-Type', contentType);
     // 大小取文档记录：PDF 预览与下载进度条依赖 Content-Length
     res.setHeader('Content-Length', doc.size.toString());
-    if (disposition === 'attachment' || kb.visibility === 'private') {
+    if (disposition === 'attachment' || kb.visibility === 'PRIVATE') {
       this.log.record({
         userId: user?.id,
         userName: user?.username,

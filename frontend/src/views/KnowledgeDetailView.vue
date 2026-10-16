@@ -209,11 +209,24 @@
                 <el-input v-model="configForm.description" type="textarea" :rows="2" style="width: 420px" />
               </el-form-item>
               <el-form-item label="可见范围">
-                <el-radio-group v-model="configForm.visibility">
-                  <el-radio value="internal">企业内可见</el-radio>
-                  <el-radio value="private">仅成员可见</el-radio>
-                  <el-radio value="public">公开</el-radio>
+                <el-radio-group v-model="configForm.visibility" :disabled="!canEditScope">
+                  <el-radio value="PRIVATE">仅成员可见</el-radio>
+                  <el-radio value="DEPT">部门可见</el-radio>
+                  <el-radio value="PUBLIC">全员可见</el-radio>
                 </el-radio-group>
+                <div class="form-hint">部门可见：归属部门及其下级部门的成员自动只读；写权限始终由成员管理控制</div>
+              </el-form-item>
+              <el-form-item v-if="configForm.visibility === 'DEPT'" label="归属部门">
+                <el-select
+                  v-model="configForm.orgId"
+                  placeholder="保持当前归属"
+                  style="width: 420px"
+                  :disabled="!canEditScope"
+                  clearable
+                >
+                  <el-option v-for="d in deptOptions" :key="d.id" :label="d.label" :value="d.id" />
+                </el-select>
+                <div class="form-hint">新建时默认为创建人主部门；此处可调整可见的部门范围</div>
               </el-form-item>
 
               <el-divider content-position="left">索引配置</el-divider>
@@ -530,6 +543,7 @@ import {
 } from '@/api/knowledge'
 import { watchKb, stopWatch } from '@/composables/useParseWatcher'
 import { getUsageStats } from '@/api/user'
+import { getDeptTree } from '@/api/department'
 import { kbStatusMap, docStatusMap, embeddingModels, parserOptions, llmModels } from '@/mock/knowledge'
 import { formatSize, formatNumber, fromNow } from '@/utils/format'
 import DocTypeIcon from '@/components/DocTypeIcon.vue'
@@ -964,7 +978,8 @@ function exportHardCases() {
 const configForm = reactive({
   name: '',
   description: '',
-  visibility: 'internal',
+  visibility: 'PRIVATE',
+  orgId: '',
   embeddingModel: '',
   parser: 'smart',
   chunkSize: 512,
@@ -978,6 +993,28 @@ const configForm = reactive({
 })
 const saving = ref(false)
 
+// 可见范围仅 owner / admin 可调（editor 只改内容）；与后端门控一致
+const canEditScope = computed(() => ['admin', 'owner'].includes(kb.value?.myRole))
+
+// 部门选择项：树拍平 + 缩进（DEPT 可见性归属部门）
+const deptOptions = ref([])
+async function loadDeptOptions() {
+  try {
+    const tree = await getDeptTree()
+    const opts = []
+    const walk = (nodes, depth) => {
+      for (const n of nodes) {
+        opts.push({ id: n.id, label: `${'　'.repeat(depth)}${n.name}` })
+        walk(n.children || [], depth + 1)
+      }
+    }
+    walk(tree || [], 0)
+    deptOptions.value = opts
+  } catch {
+    /* 部门接口异常不阻塞配置页 */
+  }
+}
+
 function resetConfigForm() {
   const data = kb.value
   if (!data) return
@@ -985,6 +1022,7 @@ function resetConfigForm() {
     name: data.name,
     description: data.description,
     visibility: data.visibility,
+    orgId: data.orgId || '',
     embeddingModel: data.embeddingModel,
     parser: data.parser,
     chunkSize: data.chunkSize,
@@ -1009,6 +1047,10 @@ async function handleSaveConfig() {
       parser: configForm.parser,
       chunkSize: configForm.chunkSize,
       chunkOverlap: configForm.chunkOverlap,
+      // 归属部门仅在 DEPT 且已选择时提交；未选保持服务端现值
+      ...(configForm.visibility === 'DEPT' && configForm.orgId
+        ? { orgId: configForm.orgId }
+        : {}),
       retriever: {
         topK: configForm.topK,
         threshold: configForm.threshold,
@@ -1126,6 +1168,7 @@ const maxQuestions = computed(() =>
 onMounted(async () => {
   await knowledgeStore.fetchDetail(route.params.id)
   resetConfigForm()
+  loadDeptOptions()
   if (kb.value) {
     Object.assign(retrieval, {
       topK: kb.value.retriever?.topK,

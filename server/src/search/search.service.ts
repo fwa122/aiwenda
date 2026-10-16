@@ -1,5 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { visibleDeptIds } from '../common/dept-scope';
 import { canReadKb } from '../common/kb-access';
+import { hasAllScope } from '../common/rbac';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** snippet 截取：定位 q 首次出现位置，取前后各 60 字符拼 … */
@@ -29,27 +31,19 @@ export class SearchService {
     });
 
     // 2. 文档名匹配：先按 kb-access 可见性取当前用户可见的 kbId 列表
-    //    （internal/public 对所有登录用户可见，private 仅 owner、admin 与成员，与 document.service 口径一致）
+    //    （PUBLIC 全员；DEPT 仅可见部门；PRIVATE 仅 owner、admin 与成员，与 document.service 口径一致）
     const [user, allKbs, memberships] = await Promise.all([
       this.prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
       this.prisma.knowledgeBase.findMany({
-        select: { id: true, userId: true, visibility: true },
+        select: { id: true, userId: true, visibility: true, orgId: true },
       }),
       this.prisma.kbMember.findMany({ where: { userId }, select: { kbId: true, role: true } }),
     ]);
     const roleMap = new Map(memberships.map((m) => [m.kbId, m.role]));
     const visibleKbIds =
-      user?.role === 'admin'
+      hasAllScope(user)
         ? allKbs.map((kb) => kb.id)
-        : allKbs
-            .filter((kb) =>
-              canReadKb(
-                kb,
-                { id: userId, username: '', role: user?.role || 'viewer' },
-                roleMap.get(kb.id) ?? null,
-              ),
-            )
-            .map((kb) => kb.id);
+        : await this.filterVisible(allKbs, userId, user?.role || 'viewer', roleMap);
 
     const documents = visibleKbIds.length
       ? await this.prisma.document.findMany({
@@ -105,5 +99,26 @@ export class SearchService {
       documents: documents.map((d) => ({ ...d, kbName: kbNameMap.get(d.kbId) || '' })),
       messages,
     };
+  }
+
+  /** kb-access 可见性过滤（DEPT 库需部门可见域，仅存在 DEPT 库时才算一次） */
+  private async filterVisible(
+    kbs: Array<{ id: string; userId: string | null; visibility: string; orgId: string | null }>,
+    userId: string,
+    role: string,
+    roleMap: Map<string, string>
+  ): Promise<string[]> {
+    const hasDeptKb = kbs.some((kb) => kb.visibility === 'DEPT');
+    const deptSet = hasDeptKb ? new Set(await visibleDeptIds(this.prisma, userId)) : null;
+    return kbs
+      .filter((kb) =>
+        canReadKb(
+          kb,
+          { id: userId, username: '', role },
+          roleMap.get(kb.id) ?? null,
+          deptSet ? (kb.orgId ? deptSet.has(kb.orgId) : false) : false,
+        ),
+      )
+      .map((kb) => kb.id);
   }
 }

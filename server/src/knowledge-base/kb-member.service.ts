@@ -8,6 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { genId } from '../common/id.util';
 import { SessionUser } from '../common/kb-access';
+import { hasAllScope } from '../common/rbac';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddMemberDto, UpdateMemberDto } from './dto/kb-member.dto';
 
@@ -18,11 +19,11 @@ const USER_FIELDS = { id: true, username: true, nickname: true, department: true
 export class KbMemberService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  /** 成员管理仅 owner / admin（editor 可写内容，但无权增删成员） */
+  /** 成员管理仅 owner / 超管（editor 可写内容，但无权增删成员） */
   private async assertManageable(kbId: string, user: SessionUser) {
     const kb = await this.prisma.knowledgeBase.findUnique({ where: { id: kbId } });
     if (!kb) throw new NotFoundException('知识库不存在');
-    if (user.role !== 'admin' && kb.userId !== user.id) {
+    if (!hasAllScope(user) && kb.userId !== user.id) {
       throw new ForbiddenException('仅知识库所有者或管理员可管理成员');
     }
     return kb;

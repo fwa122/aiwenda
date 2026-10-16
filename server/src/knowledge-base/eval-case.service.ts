@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { genId } from '../common/id.util';
+import { isKbDeptVisible } from '../common/dept-scope';
 import { canReadKb, canWriteKb, SessionUser } from '../common/kb-access';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -27,7 +28,7 @@ function normalizeKeywords(keywords?: string[] | null): string[] {
 export class EvalCaseService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  /** 读权限：能访问知识库即可查看/运行评测（与检索测试口径一致，private 库成员可见） */
+  /** 读权限：能访问知识库即可查看/运行评测（与检索测试口径一致，DEPT/成员/PUBLIC 可见） */
   private async assertReadable(kbId: string, user: SessionUser) {
     const [kb, memberRole] = await Promise.all([
       this.prisma.knowledgeBase.findUnique({ where: { id: kbId } }),
@@ -36,7 +37,8 @@ export class EvalCaseService {
         .then((m) => m?.role ?? null),
     ]);
     if (!kb) throw new NotFoundException('知识库不存在');
-    if (!canReadKb(kb, user, memberRole)) throw new ForbiddenException('无权访问该知识库');
+    const deptVisible = await isKbDeptVisible(this.prisma, user.id, kb.orgId);
+    if (!canReadKb(kb, user, memberRole, deptVisible)) throw new ForbiddenException('无权访问该知识库');
     return { kb, memberRole };
   }
 

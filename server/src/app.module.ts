@@ -10,6 +10,7 @@ import { IpWhitelistGuard } from './common/ip-whitelist.guard';
 import { StorageModule } from './storage/storage.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
+import { DepartmentModule } from './department/department.module';
 import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 import { DocumentModule } from './document/document.module';
 import { ConversationModule } from './conversation/conversation.module';
@@ -39,6 +40,7 @@ import { LogModule } from './log/log.module';
     PrismaModule,
     AuthModule,
     UserModule,
+    DepartmentModule,
     KnowledgeBaseModule,
     DocumentModule,
     ConversationModule,

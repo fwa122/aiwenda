@@ -8,6 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 import type { Readable } from 'stream';
 import { genId } from '../common/id.util';
+import { isKbDeptVisible } from '../common/dept-scope';
 import { canReadKb, canWriteKb, SessionUser } from '../common/kb-access';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiServiceClient } from '../integrations/ai-service.client';
@@ -66,7 +67,13 @@ export class DocumentService {
         .then((m) => m?.role ?? null),
     ]);
     if (!kb) throw new NotFoundException('知识库不存在');
-    const ok = need === 'write' ? canWriteKb(kb, user, memberRole) : canReadKb(kb, user, memberRole);
+    // 读路径需判定 DEPT 可见性（orgId 是否落在用户可见部门范围）；写路径与部门无关
+    const deptVisible =
+      need === 'write' ? false : await isKbDeptVisible(this.prisma, user.id, kb.orgId);
+    const ok =
+      need === 'write'
+        ? canWriteKb(kb, user, memberRole)
+        : canReadKb(kb, user, memberRole, deptVisible);
     if (!ok) throw new ForbiddenException('无权操作该知识库下的文档');
     return kb;
   }
@@ -247,7 +254,9 @@ export class DocumentService {
         })
         .then((m) => m?.role ?? null),
     ]);
-    if (!kb || !canReadKb(kb, user, memberRole)) throw new ForbiddenException('无权访问该文档');
+    if (!kb) throw new ForbiddenException('无权访问该文档');
+    const deptVisible = await isKbDeptVisible(this.prisma, user.id, kb.orgId);
+    if (!canReadKb(kb, user, memberRole, deptVisible)) throw new ForbiddenException('无权访问该文档');
     return this.prisma.chunk.findMany({
       where: { docId },
       orderBy: { chunkIndex: 'asc' },

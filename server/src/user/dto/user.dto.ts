@@ -38,7 +38,7 @@ export class CreateUserDto {
 
   @IsOptional() @IsString() nickname?: string;
   @IsOptional() @IsEmail() email?: string;
-  @IsOptional() @IsString() role?: 'admin' | 'editor' | 'viewer';
+  @IsOptional() @IsString() role?: string; // 角色 code，存在性由服务层查 roles 表校验
   @IsOptional() @IsString() department?: string;
   @IsOptional() @IsString() status?: 'active' | 'disabled';
   @IsOptional() conversationLimit?: number;
@@ -50,7 +50,7 @@ export class CreateUserDto {
 export class UpdateUserDto {
   @IsOptional() @IsString() nickname?: string;
   @IsOptional() @IsEmail() email?: string;
-  @IsOptional() @IsString() role?: 'admin' | 'editor' | 'viewer';
+  @IsOptional() @IsString() role?: string; // 角色 code，存在性由服务层查 roles 表校验
   @IsOptional() @IsString() department?: string;
   @IsOptional() @IsString() status?: 'active' | 'disabled';
   @IsOptional() conversationLimit?: number;

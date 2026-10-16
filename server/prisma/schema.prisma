@@ -55,14 +55,92 @@ model User {
   operationLogs OperationLog[]
   knowledgeBases KnowledgeBase[]
   kbMembers     KbMember[]
+  departments   UserDepartment[]
+  ledDepartments Department[] @relation("DeptLeader")
 
   @@index([role])
   @@map("users")
 }
 
 // ============================================================================
+// 组织架构（部门树 + 用户归属）
+// ============================================================================
+model Department {
+  id        String   @id // dept_xxx
+  parentId  String?  @map("parent_id")
+  name      String   @db.VarChar(64)
+  // 物化路径，以部门 id 拼接（/dept_xxx/dept_yyy）：改名零迁移、移动仅重写前缀，
+  // 子树过滤用前缀命中（LEFT(path, len) = prefix，避开 LIKE 下划线通配符）
+  path      String   @db.VarChar(256)
+  leaderId  String?  @map("leader_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent   Department?      @relation("DeptTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Department[]     @relation("DeptTree")
+  members  UserDepartment[]
+  leader   User?            @relation("DeptLeader", fields: [leaderId], references: [id], onDelete: SetNull)
+
+  @@index([parentId])
+  @@index([path])
+  @@map("departments")
+}
+
+model UserDepartment {
+  id        String   @id // udm_xxx
+  userId    String   @map("user_id")
+  deptId    String   @map("dept_id")
+  // 主部门标记：一人可跨部门兼岗，但至多一个主部门（服务层事务内先清后设）
+  isPrimary Boolean  @default(false) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [deptId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deptId])
+  @@index([deptId])
+  @@map("user_departments")
+}
+
+// ============================================================================
+// 角色（配置化鉴权：users.role 存角色 code，逻辑外键关联本表）
+// dataScope 数据范围：ALL 全部数据（超管）/ DEPT 本部门及子树 / SELF 仅本人。
+// 本期仅 ALL 参与判定（替代服务层硬编码 role==='admin'），DEPT/SELF 落库预留。
+// ============================================================================
+enum DataScope {
+  ALL
+  DEPT
+  SELF
+}
+
+model Role {
+  id        String    @id // role_xxx
+  code      String    @unique @db.VarChar(16) // admin | editor | viewer（与 users.role 对应）
+  name      String    @db.VarChar(32) // 角色显示名（替代硬编码 ROLE_NAME 映射）
+  dataScope DataScope @default(SELF) @map("data_scope")
+  builtin   Boolean   @default(false) // 内置角色：禁止删除与修改 code
+  remark    String?   @db.VarChar(128)
+  sort      Int       @default(0) // 展示排序
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("roles")
+}
+
+// ============================================================================
 // 知识库
 // ============================================================================
+
+// 可见性三态（数据范围过滤）：
+// PRIVATE 仅 owner、admin 与库成员；DEPT 归属部门（含子树）成员自动只读可见；
+// PUBLIC 全员只读可见。编辑权三种可见性下统一走 KbMember（owner/admin/editor）
+enum KbVisibility {
+  PRIVATE
+  DEPT
+  PUBLIC
+}
+
 model KnowledgeBase {
   id          String  @id // kb_xxx
   name        String  @db.VarChar(128)
@@ -89,10 +167,12 @@ model KnowledgeBase {
   // llm: { provider, model, temperature }
   llmConfig Json @map("llm_config")
 
-  visibility  String  @default("internal") @db.VarChar(16) // internal | private | public
+  visibility  KbVisibility @default(PRIVATE)
   owner       String? @db.VarChar(64)
   // 归属用户（可空；NULL 视为遗留公共资源，仅 admin 可写）
   userId      String? @map("user_id")
+  // 归属部门（DEPT 可见性的范围依据；创建时默认取创建人主部门）
+  orgId       String? @map("org_id")
   user        User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
   memberCount Int     @default(1) @map("member_count")
 
@@ -106,6 +186,7 @@ model KnowledgeBase {
 
   @@index([status])
   @@index([userId])
+  @@index([orgId])
   @@index([updatedAt])
   @@map("knowledge_bases")
 }

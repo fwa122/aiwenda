@@ -11,7 +11,7 @@ import * as bcrypt from 'bcryptjs';
 import type Redis from 'ioredis';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { withRoleName } from '../common/role.util';
+import { ROLE_NAME } from '../common/role.util';
 import { genId } from '../common/id.util';
 import { OperationLogService } from '../log/operation-log.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
@@ -163,7 +163,7 @@ export class AuthService {
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
-    return { token, refreshToken, user: this.toProfile(user) };
+    return { token, refreshToken, user: await this.toProfile(user) };
   }
 
   /**
@@ -222,7 +222,7 @@ export class AuthService {
       ver: user.tokenVersion,
     });
     const newRefreshToken = await this.issueRefreshToken(user.id, user.tokenVersion);
-    return { token, refreshToken: newRefreshToken, user: this.toProfile(user) };
+    return { token, refreshToken: newRefreshToken, user: await this.toProfile(user) };
   }
 
   /** 登出吊销 refresh token（access token 仍存活至自然过期，≤2h 风险窗口） */
@@ -239,9 +239,13 @@ export class AuthService {
     return null;
   }
 
-  /** 去掉密码字段，返回安全的用户对象（含 roleName） */
-  toProfile(user: Prisma.UserGetPayload<{}>) {
+  /** 去掉密码字段，返回安全的用户对象（含 roleName，roles 表配置优先，缺失降级硬编码映射） */
+  async toProfile(user: Prisma.UserGetPayload<{}>) {
     const { passwordHash, ...rest } = user;
-    return withRoleName(rest);
+    const role = await this.prisma.role.findUnique({
+      where: { code: rest.role },
+      select: { name: true },
+    });
+    return { ...rest, roleName: role?.name ?? ROLE_NAME[rest.role] ?? rest.role ?? '未知' };
   }
 }

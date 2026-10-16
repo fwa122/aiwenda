@@ -11,7 +11,9 @@ import {
 import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { genId } from '../common/id.util';
+import { visibleDeptIds } from '../common/dept-scope';
 import { canReadKb } from '../common/kb-access';
+import { hasAllScope } from '../common/rbac';
 import { findSensitiveWord } from '../common/sensitive-filter';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiServiceClient, AiSseEvent } from '../integrations/ai-service.client';
@@ -534,26 +536,34 @@ export class ChatService {
     }
   }
 
-  /** 防越权：只保留当前用户可见（internal/public、自己的 private 或所在成员库）的知识库 */
+  /** 防越权：只保留当前用户可见（PUBLIC、DEPT 且落在可见部门、自己的 PRIVATE 或所在成员库）的知识库 */
   private async filterVisibleKbs(kbIds: string[], userId: string): Promise<string[]> {
     if (!kbIds.length) return kbIds;
     const [user, kbs, memberships] = await Promise.all([
       this.prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
       this.prisma.knowledgeBase.findMany({
         where: { id: { in: kbIds } },
-        select: { id: true, userId: true, visibility: true },
+        select: { id: true, userId: true, visibility: true, orgId: true },
       }),
-      // 成员库对 private 可见，与 kb-access 读口径一致
+      // 成员库对 PRIVATE 也可读，与 kb-access 读口径一致
       this.prisma.kbMember.findMany({
         where: { kbId: { in: kbIds }, userId },
         select: { kbId: true, role: true },
       }),
     ]);
-    if (user?.role === 'admin') return kbIds;
+    if (hasAllScope(user)) return kbIds;
+    // 检索时强制校验 DEPT 库的部门可见域：仅当列表中存在 DEPT 库才算一次（多数请求不涉及）
+    const hasDeptKb = kbs.some((kb) => kb.visibility === 'DEPT');
+    const deptSet = hasDeptKb ? new Set(await visibleDeptIds(this.prisma, userId)) : null;
     const roleMap = new Map(memberships.map((m) => [m.kbId, m.role]));
     return kbs
       .filter((kb) =>
-        canReadKb(kb, { id: userId, username: '', role: user?.role || 'viewer' }, roleMap.get(kb.id) ?? null),
+        canReadKb(
+          kb,
+          { id: userId, username: '', role: user?.role || 'viewer' },
+          roleMap.get(kb.id) ?? null,
+          deptSet ? (kb.orgId ? deptSet.has(kb.orgId) : false) : false,
+        ),
       )
       .map((kb) => kb.id);
   }

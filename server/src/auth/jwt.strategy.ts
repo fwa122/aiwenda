@@ -23,6 +23,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    *   老格式令牌无 ver 字段，按 0 处理，与存量用户 tokenVersion 默认值 0 兼容，升级不掉线
    * - status 非 active：封禁即时生效，消除「access 最长存活 2h」窗口
    * - 返回库内实时 role（此前返回 JWT 内快照，改角色需等令牌过期才生效）
+   * - 附带实时 dataScope（roles 表配置化鉴权）：角色记录不存在按 SELF 最小权限兜底，
+   *   服务层用 hasAllScope(user) 判断超管，不再硬编码 role === 'admin'
    */
   async validate(payload: any) {
     if (!payload?.sub) {
@@ -42,10 +44,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if ((payload.ver ?? 0) !== user.tokenVersion) {
       throw new UnauthorizedException();
     }
+    const role = await this.prisma.role.findUnique({
+      where: { code: user.role },
+      select: { dataScope: true },
+    });
     return {
       id: user.id,
       username: user.username,
       role: user.role,
+      dataScope: role?.dataScope ?? 'SELF',
     };
   }
 }

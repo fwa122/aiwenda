@@ -7,7 +7,8 @@ import {
 import * as bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { genId } from '../common/id.util';
-import { withRoleName } from '../common/role.util';
+import { ROLE_NAME } from '../common/role.util';
+import { getRoleMap } from '../common/rbac';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreateUserDto,
@@ -19,15 +20,39 @@ import {
 export class UserService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
+  /** 角色存在性校验（逻辑外键）：users.role 必须是 roles 表中已配置的 code */
+  private async assertRoleExists(code: string) {
+    const exists = await this.prisma.role.findUnique({
+      where: { code },
+      select: { code: true },
+    });
+    if (!exists) throw new BadRequestException(`角色不存在：${code}`);
+  }
+
+  /** 批量标注 roleName：roles 表配置优先（可运营改名），角色缺失降级硬编码映射 */
+  private async annotateRoleName<T extends { role: string }>(
+    users: T[]
+  ): Promise<(T & { roleName: string })[]> {
+    const roleMap = await getRoleMap(this.prisma);
+    return users.map((u) => ({
+      ...u,
+      roleName: roleMap.get(u.role)?.name ?? ROLE_NAME[u.role] ?? u.role ?? '未知',
+    }));
+  }
+
   async getProfile(id: string) {
     const u = await this.prisma.user.findUnique({ where: { id } });
     if (!u) throw new NotFoundException('用户不存在');
     const { passwordHash, ...rest } = u;
-    return withRoleName(rest);
+    const [withName] = await this.annotateRoleName([rest]);
+    return withName;
   }
 
   async updateProfile(id: string, dto: UpdateProfileDto) {
-    return withRoleName(await this.prisma.user.update({ where: { id }, data: { ...dto } }));
+    const u = await this.prisma.user.update({ where: { id }, data: { ...dto } });
+    const { passwordHash, ...rest } = u;
+    const [withName] = await this.annotateRoleName([rest]);
+    return withName;
   }
 
   async changePassword(id: string, oldPassword: string, newPassword: string) {
@@ -73,7 +98,9 @@ export class UserService {
     ]);
 
     return {
-      list: list.map(({ passwordHash, ...r }) => withRoleName(r)),
+      list: await this.annotateRoleName(
+        list.map(({ passwordHash: _hash, ...r }) => r)
+      ),
       total,
       page,
       pageSize,
@@ -85,7 +112,8 @@ export class UserService {
       where: { username: dto.username },
     });
     if (exist) throw new BadRequestException('用户名已存在');
-    return this.prisma.user.create({
+    if (dto.role) await this.assertRoleExists(dto.role);
+    const u = await this.prisma.user.create({
       data: {
         id: genId('user'),
         username: dto.username,
@@ -101,16 +129,23 @@ export class UserService {
         monthlyTokenLimit: dto.monthlyTokenLimit ?? 200000,
       },
     });
+    const { passwordHash: _hash, ...rest } = u;
+    const [withName] = await this.annotateRoleName([rest]);
+    return withName;
   }
 
   async update(id: string, dto: UpdateUserDto) {
+    if (dto.role) await this.assertRoleExists(dto.role);
     // 封禁（active→disabled）时自增 tokenVersion：被禁用户旧令牌立即 401，
     // 而非存活至 access 自然过期（≤2h 窗口）
     const data = { ...dto };
     if (dto.status === 'disabled') {
       (data as Record<string, unknown>).tokenVersion = { increment: 1 };
     }
-    return withRoleName(await this.prisma.user.update({ where: { id }, data }));
+    const u = await this.prisma.user.update({ where: { id }, data });
+    const { passwordHash: _hash, ...rest } = u;
+    const [withName] = await this.annotateRoleName([rest]);
+    return withName;
   }
 
   async remove(id: string) {

@@ -27,12 +27,17 @@ class Settings(BaseSettings):
     qianwen_api_key: str = ''
     qianwen_base_url: str = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
 
+    # 硅基流动 SiliconFlow（OpenAI 兼容；BAAI/bge-m3 嵌入与 bge-reranker-v2-m3 精排免费档）
+    siliconflow_api_key: str = ''
+    siliconflow_base_url: str = 'https://api.siliconflow.cn/v1'
+
     # Embedding：维度必须与库内 vector(1024) 一致，换模型需全库重建索引
-    embedding_provider: str = 'zhipu'  # zhipu | qianwen | mock
+    embedding_provider: str = 'zhipu'  # zhipu | qianwen | siliconflow | mock
     embedding_model: str = 'embedding-3'
     embedding_dimensions: int = 1024
 
-    # Rerank：智谱 /paas/v4/rerank，当前模型 ID 固定为 rerank
+    # Rerank：Jina 风格 /rerank 接口（智谱 /paas/v4/rerank 或硅基流动 /v1/rerank，报文同构）
+    rerank_provider: str = 'zhipu'  # zhipu | siliconflow
     rerank_model: str = 'rerank'
 
     # 自适应精排路由：Top1 与 Top2 候选分差 ≥ 该值时视为「赢家明确」，跳过精排调用。

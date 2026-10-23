@@ -15,7 +15,7 @@ from .db import fetch_one
 # 缓存 TTL（秒）：更换 key 后 worker 侧最迟此延迟生效
 TTL_SECONDS = 45
 
-PROVIDERS = ('zhipu', 'qianwen', 'moonshot', 'minimax')
+PROVIDERS = ('zhipu', 'qianwen', 'moonshot', 'minimax', 'siliconflow')
 
 _cache: tuple[float, dict] | None = None  # (loaded_at, {provider: key})
 

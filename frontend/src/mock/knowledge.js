@@ -424,6 +424,7 @@ export const kbStatusMap = {
 
 /** 可选 Embedding 模型 */
 export const embeddingModels = [
+  { value: 'BAAI/bge-m3', label: 'BAAI/bge-m3（硅基流动，免费，1024 维）' },
   { value: 'qwen3.7-text-embedding', label: 'qwen3.7-text-embedding（千问，1024 维）' },
   { value: 'bge-large-zh-v1.5', label: 'bge-large-zh-v1.5（中文，1024 维）' },
   { value: 'bge-m3', label: 'bge-m3（多语言，1024 维）' },
@@ -449,7 +450,8 @@ export const llmProviderMeta = {
   zhipu: { name: '智谱 BigModel', envKey: 'ZHIPU_API_KEY', desc: 'GLM 对话 / embedding / rerank / OCR（OpenAI 兼容）' },
   qianwen: { name: '通义千问 DashScope', envKey: 'QIANWEN_API_KEY', desc: 'qwen/deepseek 对话 / qwen embedding（OpenAI 兼容）' },
   moonshot: { name: '月之暗面 Moonshot', envKey: 'MOONSHOT_API_KEY', desc: 'kimi/moonshot 对话（OpenAI 兼容）' },
-  minimax: { name: 'MiniMax 开放平台', envKey: 'MINIMAX_API_KEY', desc: 'MiniMax-M2.x 对话，仅对话生成无嵌入 API（OpenAI 兼容）' }
+  minimax: { name: 'MiniMax 开放平台', envKey: 'MINIMAX_API_KEY', desc: 'MiniMax-M2.x 对话，仅对话生成无嵌入 API（OpenAI 兼容）' },
+  siliconflow: { name: '硅基流动 SiliconFlow', envKey: 'SILICONFLOW_API_KEY', desc: 'BAAI/bge-m3 嵌入与 bge-reranker-v2-m3 精排（免费档，OpenAI 兼容）' }
 }
 
 /** 可选解析策略 */

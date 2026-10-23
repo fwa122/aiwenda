@@ -91,14 +91,21 @@ def _lexical_recall(kb_ids: list[str], query: str, pool_size: int) -> list[dict]
 
 
 def _rerank(query: str, rows: list[dict]) -> list[dict]:
-    """智谱 rerank 精排（query-doc 交叉打分）。失败时返回 RRF 原序，不阻断检索。"""
+    """精排（query-doc 交叉打分）：按 rerank_provider 路由智谱或硅基流动
+    （两者均为 Jina 风格 /rerank，报文同构）。失败时返回 RRF 原序，不阻断检索。"""
     if len(rows) <= 1:
         return rows
+    if settings.rerank_provider == 'siliconflow':
+        url = f'{settings.siliconflow_base_url}/rerank'
+        key = resolve_key('siliconflow')
+    else:
+        url = f'{settings.zhipu_base_url}/rerank'
+        key = resolve_key('zhipu')
     try:
         with httpx.Client(timeout=10.0) as client:
             resp = client.post(
-                f'{settings.zhipu_base_url}/rerank',
-                headers={'Authorization': f'Bearer {resolve_key("zhipu")}'},
+                url,
+                headers={'Authorization': f'Bearer {key}'},
                 json={
                     'model': settings.rerank_model,
                     'query': query[:4000],

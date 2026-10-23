@@ -104,9 +104,14 @@ services:
       # MiniMax（可选生成模型，OpenAI 兼容；仅对话无嵌入）
       - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
       - MINIMAX_BASE_URL=${MINIMAX_BASE_URL:-https://api.minimax.cn/v1}
+      # 硅基流动（BAAI/bge-m3 嵌入 / bge-reranker-v2-m3 精排，免费档）
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
+      - SILICONFLOW_BASE_URL=${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
       # 向量 / 默认生成参数
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-zhipu}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embedding-3}
+      - RERANK_PROVIDER=${RERANK_PROVIDER:-zhipu}
+      - RERANK_MODEL=${RERANK_MODEL:-rerank}
       - LLM_MODEL=${LLM_MODEL:-glm-4-flash}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.3}
       # 轻量任务模型（改写/建议/命名）：空值跟随 LLM_MODEL 渠道

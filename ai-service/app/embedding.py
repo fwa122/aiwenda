@@ -108,6 +108,15 @@ def _get_client() -> OpenAI:
                 timeout=60.0,
                 max_retries=2,  # SDK 内置重试（网络层），外层再兜批量级失败
             )
+        elif provider == 'siliconflow':
+            if not key:
+                raise ValueError('SILICONFLOW_API_KEY 未配置')
+            _clients[cache_key] = OpenAI(
+                api_key=key,
+                base_url=settings.siliconflow_base_url,
+                timeout=60.0,
+                max_retries=2,
+            )
         else:  # zhipu
             if not key:
                 raise ValueError('ZHIPU_API_KEY 未配置')
@@ -124,11 +133,11 @@ def _create_with_retry(client: OpenAI, batch: list[str]) -> list[list[float]]:
     last_exc: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS):
         try:
-            resp = client.embeddings.create(
-                model=settings.embedding_model,
-                input=batch,
-                dimensions=settings.embedding_dimensions,
-            )
+            # bge-m3 固定 1024 维，不支持 dimensions 参数（传入会 400）；智谱/千问支持
+            kwargs = {'model': settings.embedding_model, 'input': batch}
+            if settings.embedding_provider != 'siliconflow':
+                kwargs['dimensions'] = settings.embedding_dimensions
+            resp = client.embeddings.create(**kwargs)
             return [d.embedding for d in resp.data]
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
@@ -160,8 +169,11 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
     client = _get_client()
     out: list[list[float]] = []
-    # qwen3.7-text-embedding 批量上限 20（实测 32 报 InvalidParameter），智谱 32
-    batch = 20 if settings.embedding_provider == 'qianwen' else 32
+    # qwen3.7-text-embedding 批量上限 20（实测 32 报 InvalidParameter），
+    # 硅基流动保守 16（免费档限流敏感），智谱 32
+    batch = 20 if settings.embedding_provider == 'qianwen' else (
+        16 if settings.embedding_provider == 'siliconflow' else 32
+    )
     try:
         for i in range(0, len(texts), batch):
             out.extend(_create_with_retry(client, texts[i:i + batch]))

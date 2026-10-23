@@ -52,7 +52,7 @@ export const DEFAULT_SETTINGS = {
 const SETTINGS_ID = 1;
 
 /** LLM API Key 支持的渠道（与 ai-service keystore.PROVIDERS 保持一致） */
-const API_KEY_PROVIDERS = ['zhipu', 'qianwen', 'moonshot', 'minimax'] as const;
+const API_KEY_PROVIDERS = ['zhipu', 'qianwen', 'moonshot', 'minimax', 'siliconflow'] as const;
 type ApiKeyProvider = (typeof API_KEY_PROVIDERS)[number];
 
 /** apiKeys 脱敏形态：configured 仅代表设置页（DB）已配置；.env 默认值由 /internal/health 的 keyPresence 补充 */

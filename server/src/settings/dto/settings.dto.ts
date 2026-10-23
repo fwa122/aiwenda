@@ -25,6 +25,11 @@ export class ApiKeysDto {
   @IsString()
   @MaxLength(300)
   minimax?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  siliconflow?: string;
 }
 
 /**

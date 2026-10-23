@@ -800,7 +800,8 @@ const API_KEY_PROVIDERS = [
   { key: 'zhipu', label: '智谱', hint: 'GLM 对话 / embedding / rerank / OCR（OpenAI 兼容）' },
   { key: 'qianwen', label: '通义千问', hint: 'qwen/deepseek 对话 / qwen embedding（DashScope）' },
   { key: 'moonshot', label: 'Kimi', hint: 'kimi/moonshot 对话（Moonshot 开放平台）' },
-  { key: 'minimax', label: 'MiniMax', hint: 'MiniMax-M2.x 对话（MiniMax 开放平台，OpenAI 兼容）' }
+  { key: 'minimax', label: 'MiniMax', hint: 'MiniMax-M2.x 对话（MiniMax 开放平台，OpenAI 兼容）' },
+  { key: 'siliconflow', label: '硅基流动', hint: 'BAAI/bge-m3 嵌入 / bge-reranker-v2-m3 精排（免费档，OpenAI 兼容）' }
 ]
 
 /** 模型接入说明表：渠道元信息 + llmModels 注册表聚合（新增渠道/模型自动同步到该表） */
@@ -815,9 +816,9 @@ const modelGuide = computed(() =>
 )
 
 /** 脱敏状态（GET /settings 返回）：{configured, tail, source} */
-const apiKeyState = reactive({ zhipu: null, qianwen: null, moonshot: null, minimax: null })
+const apiKeyState = reactive({ zhipu: null, qianwen: null, moonshot: null, minimax: null, siliconflow: null })
 /** 新输入的 key（仅保存时提交，不回显明文） */
-const apiKeyInputs = reactive({ zhipu: '', qianwen: '', moonshot: '', minimax: '' })
+const apiKeyInputs = reactive({ zhipu: '', qianwen: '', moonshot: '', minimax: '', siliconflow: '' })
 const keySaving = ref(false)
 const keyVerifying = ref('')
 
@@ -916,7 +917,7 @@ const embStarting = ref(false)
 const embProbing = ref(false)
 let embTimer = null
 
-const PROVIDER_LABELS = { zhipu: '智谱', qianwen: '通义千问', mock: '模拟' }
+const PROVIDER_LABELS = { zhipu: '智谱', qianwen: '通义千问', siliconflow: '硅基流动', mock: '模拟' }
 
 function embChannelLabel(ch) {
   if (!ch) return ''

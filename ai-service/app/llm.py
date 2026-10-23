@@ -3,7 +3,8 @@
 仅对话生成层多 Provider；Embedding 走 embedding.py（provider 可配），Rerank/OCR 固定智谱。
 路由规则：按模型名前缀匹配注册表，未识别的模型回落全局默认（llm_model）。
 """
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
+import time
 
 from .config import settings
 from .keystore import resolve_key
@@ -109,6 +110,23 @@ def _apply_provider_kwargs(kwargs: dict, provider: str) -> None:
             kwargs['max_completion_tokens'] = int(kwargs.pop('max_tokens')) + 4096
 
 
+# 429 限流退避（免费档 1302 账户限流 / 1305 容量限流）：两次等待共 11s，超限抛原错误
+_LLM_RETRY_DELAYS = (3.0, 8.0)
+
+
+def _create_with_retry(client: OpenAI, kwargs: dict):
+    """流式/非流式共用。429 在 create() 建连时抛出，重试不会重复输出已流出的内容。"""
+    last: Exception | None = None
+    for i in range(len(_LLM_RETRY_DELAYS) + 1):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except RateLimitError as e:
+            last = e
+            if i < len(_LLM_RETRY_DELAYS):
+                time.sleep(_LLM_RETRY_DELAYS[i])
+    raise last
+
+
 def stream_chat(
     messages: list[dict],
     model: str | None = None,
@@ -127,7 +145,7 @@ def stream_chat(
     if max_tokens is not None:
         kwargs['max_tokens'] = max_tokens
     _apply_provider_kwargs(kwargs, provider)
-    return _get_client(provider).chat.completions.create(**kwargs)
+    return _create_with_retry(_get_client(provider), kwargs)
 
 
 def chat_once(
@@ -143,7 +161,7 @@ def chat_once(
     if max_tokens is not None:
         kwargs['max_tokens'] = max_tokens
     _apply_provider_kwargs(kwargs, provider)
-    resp = _get_client(provider).chat.completions.create(**kwargs)
+    resp = _create_with_retry(_get_client(provider), kwargs)
     if not resp.choices:
         return ''
     return resp.choices[0].message.content or ''

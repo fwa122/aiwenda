@@ -437,6 +437,7 @@ export const llmModels = [
   { value: 'qwen3.7-flash', label: 'Qwen3.7-Flash（千问）', provider: 'qianwen' },
   { value: 'deepseek-v4-pro-0813', label: 'DeepSeek-V4-Pro（千问平台）', provider: 'qianwen' },
   { value: 'glm-4-flash', label: 'GLM-4-Flash（智谱）', provider: 'zhipu' },
+  { value: 'glm-4.7-flash', label: 'GLM-4.7-Flash（智谱，免费）', provider: 'zhipu' },
   { value: 'kimi-k2.6', label: 'Kimi K2.6（月之暗面）', provider: 'moonshot' },
   { value: 'MiniMax-M2.5', label: 'MiniMax-M2.5（MiniMax，高性价比）', provider: 'minimax' },
   { value: 'MiniMax-M2.5-highspeed', label: 'MiniMax-M2.5-Highspeed（MiniMax，极速）', provider: 'minimax' },

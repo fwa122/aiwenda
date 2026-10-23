@@ -305,6 +305,7 @@ const kbStore = useKnowledgeStore()
 /** 模型单价表（元 / 百万 tokens：[输入, 输出]）。公开定价近似值，可按最新价目调整 */
 const MODEL_PRICES = {
   'glm-4-flash': [0, 0],
+  'glm-4.7-flash': [0, 0],
   'glm-4.5': [2, 8],
   'glm-4.6': [2, 8],
   'qwen3.7-flash': [0.15, 0.75],

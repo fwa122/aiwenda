@@ -100,7 +100,7 @@ beforeAll(async () => {
       id: KB_ID,
       name: `评测用例测试库_${RUN}`,
       status: 'ready',
-      visibility: 'internal',
+      visibility: 'PUBLIC', // v0.9.42 枚举大写化（旧 'internal'）：非 owner 普通用户可读、写仍 403
       owner: USER_OWNER,
       userId: ownerId,
       retrieverConfig: { topK: 5, threshold: 0.28, rerank: true, rerankModel: '', hybrid: true },

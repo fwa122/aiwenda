@@ -171,14 +171,23 @@ export class AiServiceClient {
   }
 
   /**
-   * 嵌入渠道签名 / 全库重嵌入状态（admin 设置页）。
-   * 含签名 vs 当前配置的变更检测、运行进度与成本预估（切片数/token 粗估）。
+   * 嵌入渠道签名 / 全库重嵌入状态 / 渠道健康度（admin 设置页）。
+   * 含签名 vs 当前配置的变更检测、运行进度、成本预估（切片数/token 粗估）
+   * 与健康区块（status: ok|down，由最近成功/失败时间派生）。
    */
   async embeddingState(): Promise<{
     signature: { provider: string; model: string; dimensions: number } | null;
     config: { provider: string; model: string; dimensions: number };
     needsReembed: boolean;
     phase: string;
+    health: {
+      status: 'ok' | 'down';
+      lastOkAt: string | null;
+      lastErrorAt: string | null;
+      lastErrorKind: 'billing' | 'auth' | 'network' | 'unknown' | null;
+      lastErrorMsg: string | null;
+      userMessage: string | null;
+    };
     progress: any | null;
     preview: { docCount: number; chunkCount: number; estimatedTokens: number };
   }> {
@@ -187,6 +196,24 @@ export class AiServiceClient {
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) throw new Error(`AI 服务嵌入状态读取失败（HTTP ${res.status}）`);
+    return res.json();
+  }
+
+  /** 主动探测嵌入渠道可用性（设置页检测按钮 / 重嵌入前阻断检查）。
+   *  探测失败是「结论」非异常：一律 200，由 ok/userMessage 承载结果。 */
+  async probeEmbedding(): Promise<{
+    ok: boolean;
+    kind: 'billing' | 'auth' | 'network' | 'unknown' | null;
+    userMessage: string | null;
+    latencyMs: number;
+    checkedAt: string;
+  }> {
+    const res = await fetch(`${this.baseUrl}/internal/embedding/probe`, {
+      method: 'POST',
+      headers: this.authHeaders(),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) throw new Error(`AI 服务嵌入探测失败（HTTP ${res.status}）`);
     return res.json();
   }
 
@@ -209,7 +236,7 @@ export class AiServiceClient {
     return res.json();
   }
 
-  /** 检索（供 retrieval-test 转发） */
+  /** 检索（供 retrieval-test 转发）。非 2xx 透传上游 detail（嵌入渠道不可用为可读 503 文案） */
   async search(payload: {
     kbIds: string[];
     query: string;
@@ -224,7 +251,16 @@ export class AiServiceClient {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(30000),
     });
-    if (!res.ok) throw new Error(`AI 服务检索失败（HTTP ${res.status}）`);
+    if (!res.ok) {
+      let detail = `AI 服务检索失败（HTTP ${res.status}）`;
+      try {
+        const body = await res.json();
+        if (body?.detail) detail = body.detail;
+      } catch {
+        /* 保留状态码文案 */
+      }
+      throw new Error(detail);
+    }
     return res.json();
   }
 

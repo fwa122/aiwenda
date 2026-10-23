@@ -56,6 +56,17 @@
       </div>
     </header>
 
+    <!-- 嵌入可用性预警：不可用时页面顶部横幅（软提示不禁答，可关闭） -->
+    <el-alert
+      v-if="!embSummary.available && !embAlertDismissed"
+      class="emb-alert"
+      :title="embSummary.message || '知识库问答暂时不可用'"
+      type="warning"
+      show-icon
+      closable
+      @close="embAlertDismissed = true"
+    />
+
     <!-- 消息区 -->
     <div ref="scrollRef" class="chat-scroll scroll-thin" @scroll="handleScroll">
       <div class="chat-inner">
@@ -203,6 +214,7 @@ import { useChatStore, useKnowledgeStore } from '@/store'
 import { fileToBase64, uploadAttachments } from '@/api/chat'
 import { getFavoriteIds, addFavorite } from '@/api/favorite'
 import { ensureNotifyPermission, watchKb, stopWatch } from '@/composables/useParseWatcher'
+import { useEmbeddingSummary } from '@/composables/useEmbeddingSummary'
 import { llmModels } from '@/mock/knowledge'
 import { formatNumber, formatDateTime } from '@/utils/format'
 import ChatMessage from '@/components/ChatMessage.vue'
@@ -227,6 +239,10 @@ const chatInputRef = ref(null)
 
 const previewVisible = ref(false)
 const preview = ref(null)
+
+/* ===== 嵌入渠道可用性预警：页面级克制横幅（仅不可用时显示，可关闭） ===== */
+const { summary: embSummary, refresh: refreshEmbSummary } = useEmbeddingSummary()
+const embAlertDismissed = ref(false)
 
 /* ===== 回答收藏：已收藏消息 ID 集合（驱动星标高亮） ===== */
 const favoriteIds = ref(new Set())
@@ -269,6 +285,7 @@ onMounted(async () => {
   document.addEventListener('scroll', onDocScroll, true)
   document.addEventListener('selectionchange', onDocSelectionChange)
 
+  refreshEmbSummary()
   await knowledgeStore.fetchOptions()
   if (!kbIds.value.length) {
     kbIds.value = kbOptions.value.filter((k) => k.status === 'ready').slice(0, 1).map((k) => k.id)
@@ -730,6 +747,11 @@ function handleExport() {
   flex-direction: column;
   height: 100%;
   background: var(--c-bg-soft);
+}
+
+.emb-alert {
+  margin: 0 20px 8px;
+  border-radius: 8px;
 }
 
 /* 顶部栏 */

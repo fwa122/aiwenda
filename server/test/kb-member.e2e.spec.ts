@@ -117,7 +117,7 @@ beforeAll(async () => {
       name: `成员管理测试库${RUN}`,
       description: 'e2e',
       status: 'ready',
-      visibility: 'private',
+      visibility: 'PRIVATE', // v0.9.42 枚举大写化（旧 'private' 小写非法）
       owner: OWNER,
       userId: ownerId,
       retrieverConfig: {},

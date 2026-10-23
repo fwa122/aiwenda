@@ -32,4 +32,53 @@ describe('EmbeddingStateService', () => {
       await expect(service.assertChatAvailable()).rejects.toThrow('全库重嵌入');
     }
   });
+
+  // ===== getSummary：用户侧可用性摘要（横幅预警用，down 只预警不禁答） =====
+
+  it('summary：表不存在/查询失败按可用兜底（软提示不阻塞）', async () => {
+    const service = makeService(vi.fn().mockRejectedValue(new Error('relation does not exist')));
+    await expect(service.getSummary()).resolves.toEqual({ available: true, message: '' });
+  });
+
+  it('summary：重嵌入进行中提示更新中', async () => {
+    const service = makeService(
+      vi.fn().mockResolvedValue([{ phase: 'running', last_ok_at: new Date(), last_error_at: null }]),
+    );
+    const out = await service.getSummary();
+    expect(out.available).toBe(false);
+    expect(out.message).toContain('正在更新');
+  });
+
+  it('summary：最近失败晚于最近成功视为渠道异常', async () => {
+    const okAt = new Date('2026-10-23T10:00:00Z');
+    const errAt = new Date('2026-10-23T10:05:00Z');
+    const service = makeService(
+      vi.fn().mockResolvedValue([{ phase: 'idle', last_ok_at: okAt, last_error_at: errAt }]),
+    );
+    const out = await service.getSummary();
+    expect(out.available).toBe(false);
+    expect(out.message).toContain('暂时不可用');
+  });
+
+  it('summary：失败早于成功（已恢复）或从未失败均可用', async () => {
+    const okAt = new Date('2026-10-23T10:00:00Z');
+    const errAt = new Date('2026-10-23T09:55:00Z');
+    const recovered = makeService(
+      vi.fn().mockResolvedValue([{ phase: 'idle', last_ok_at: okAt, last_error_at: errAt }]),
+    );
+    await expect(recovered.getSummary()).resolves.toEqual({ available: true, message: '' });
+
+    const healthy = makeService(
+      vi.fn().mockResolvedValue([{ phase: 'idle', last_ok_at: okAt, last_error_at: null }]),
+    );
+    await expect(healthy.getSummary()).resolves.toEqual({ available: true, message: '' });
+  });
+
+  it('summary：仅失败无成功记录同样视为异常', async () => {
+    const service = makeService(
+      vi.fn().mockResolvedValue([{ phase: 'idle', last_ok_at: null, last_error_at: new Date() }]),
+    );
+    const out = await service.getSummary();
+    expect(out.available).toBe(false);
+  });
 });

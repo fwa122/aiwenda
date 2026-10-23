@@ -195,7 +195,7 @@ export function verifyApiKey(payload) {
   return request({ url: '/v1/settings/verify-key', method: 'post', data: payload })
 }
 
-/** 嵌入渠道签名与全库重嵌入状态（admin）：变更检测 + 进度 + 成本预估 */
+/** 嵌入渠道签名与全库重嵌入状态（admin）：变更检测 + 进度 + 成本预估 + 健康度 */
 export function getEmbeddingState() {
   if (USE_MOCK) {
     return mockOk({
@@ -203,11 +203,26 @@ export function getEmbeddingState() {
       config: { provider: 'zhipu', model: 'embedding-3', dimensions: 1024 },
       needsReembed: false,
       phase: 'idle',
+      health: { status: 'ok', lastOkAt: null, lastErrorAt: null, lastErrorKind: null, lastErrorMsg: null, userMessage: null },
       progress: null,
       preview: { docCount: 0, chunkCount: 0, estimatedTokens: 0 }
     }, 200)
   }
   return request({ url: '/v1/settings/embedding', method: 'get' })
+}
+
+/** 嵌入渠道可用性摘要（登录可读）：聊天页/知识库页横幅预警用，仅 available/message */
+export function getEmbeddingSummary() {
+  if (USE_MOCK) return mockOk({ available: true, message: '' }, 200)
+  return request({ url: '/v1/settings/embedding/summary', method: 'get' })
+}
+
+/** 主动探测嵌入渠道可用性（admin）：真实发一次嵌入调用并写回健康记录 */
+export function probeEmbedding() {
+  if (USE_MOCK) {
+    return mockOk({ ok: true, kind: null, userMessage: null, latencyMs: 12, checkedAt: new Date().toISOString() }, 400)
+  }
+  return request({ url: '/v1/settings/embedding/probe', method: 'post' })
 }
 
 /** 触发全库重嵌入（admin，需先在确认框核对成本与不可逆风险） */

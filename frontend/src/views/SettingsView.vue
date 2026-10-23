@@ -204,6 +204,28 @@
                   <span class="form-hint">由服务端（ai-service/.env）配置，重启后生效</span>
                 </div>
               </el-form-item>
+              <el-form-item label="渠道健康">
+                <div class="readonly-model">
+                  <el-tag
+                    v-if="emb.health"
+                    :type="emb.health.status === 'down' ? 'danger' : 'success'"
+                    effect="light"
+                  >
+                    {{ emb.health.status === 'down' ? '异常' : '正常' }}
+                  </el-tag>
+                  <el-tag v-else type="info" effect="light">未知</el-tag>
+                  <span v-if="emb.health?.lastOkAt" class="form-hint">
+                    最近成功 {{ formatDateTime(emb.health.lastOkAt) }}
+                  </span>
+                  <span
+                    v-if="emb.health?.status === 'down' && emb.health?.lastErrorMsg"
+                    class="form-hint emb-health-error"
+                  >
+                    {{ emb.health.lastErrorMsg }}（{{ formatDateTime(emb.health.lastErrorAt) }}）
+                  </span>
+                  <el-button size="small" :loading="embProbing" @click="probeChannel">检测可用性</el-button>
+                </div>
+              </el-form-item>
               <el-form-item label="向量签名">
                 <div class="readonly-model">
                   <el-tag v-if="emb.signature" :type="emb.needsReembed ? 'warning' : 'success'" effect="light">
@@ -659,6 +681,7 @@ import {
   updateSystemSettings,
   verifyApiKey,
   getEmbeddingState,
+  probeEmbedding,
   triggerReembed,
   changePassword,
   getApiKeys,
@@ -681,7 +704,7 @@ import {
   removeDeptMember
 } from '@/api/department'
 import { llmModels, embeddingModels, vectorStores, llmProviderMeta } from '@/mock/knowledge'
-import { formatNumber } from '@/utils/format'
+import { formatNumber, formatDateTime } from '@/utils/format'
 import { clone } from '@/utils/format'
 
 const userStore = useUserStore()
@@ -885,10 +908,12 @@ const emb = reactive({
   signature: null,
   needsReembed: false,
   phase: 'idle',
+  health: null,
   progress: null,
   preview: { docCount: 0, chunkCount: 0, estimatedTokens: 0 }
 })
 const embStarting = ref(false)
+const embProbing = ref(false)
 let embTimer = null
 
 const PROVIDER_LABELS = { zhipu: '智谱', qianwen: '通义千问', mock: '模拟' }
@@ -926,7 +951,41 @@ function scheduleEmbPoll() {
   }
 }
 
+/** 主动探测渠道可用性（真实发一次嵌入调用，结果同时写回服务端健康记录） */
+async function probeChannel() {
+  embProbing.value = true
+  try {
+    const r = await probeEmbedding()
+    if (r.ok) {
+      ElMessage.success(`渠道可用（${r.latencyMs}ms）`)
+    } else {
+      ElMessage.error(r.userMessage || '渠道当前不可用')
+    }
+  } catch {
+    ElMessage.error('AI 服务不可达，无法探测')
+  } finally {
+    embProbing.value = false
+  }
+  loadEmbeddingState()
+}
+
 async function startReembed() {
+  // 渠道可用性前置探测：欠费/鉴权失败时重嵌入必失败，先阻断避免空烧任务
+  embProbing.value = true
+  let probe = null
+  try {
+    probe = await probeEmbedding()
+  } catch {
+    ElMessage.error('AI 服务不可达，无法确认渠道可用性')
+    embProbing.value = false
+    return
+  }
+  embProbing.value = false
+  if (!probe.ok) {
+    ElMessage.error(`渠道当前不可用，已阻止重嵌入：${probe.userMessage || '未知原因'}`)
+    loadEmbeddingState()
+    return
+  }
   const p = emb.preview || {}
   const dimChanged = emb.signature && emb.config && emb.signature.dimensions !== emb.config.dimensions
   const tokens = p.estimatedTokens || 0
@@ -1377,6 +1436,10 @@ onUnmounted(() => {
   margin-left: 12px;
   font-size: 12px;
   color: var(--c-text-4);
+}
+
+.emb-health-error {
+  color: var(--el-color-danger, #f56c6c);
 }
 
 .readonly-model {

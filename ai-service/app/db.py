@@ -145,10 +145,22 @@ _EMBEDDING_STATE_DDL = """CREATE TABLE IF NOT EXISTS embedding_state (
     dim_changed BOOLEAN NOT NULL DEFAULT FALSE,
     pending_doc_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     error_msg TEXT,
+    last_ok_at TIMESTAMPTZ,
+    last_error_at TIMESTAMPTZ,
+    last_error_kind TEXT,
+    last_error_msg TEXT,
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )"""
+
+# 健康列（v0.9.42）：老库 CREATE TABLE IF NOT EXISTS 不会补列，须幂等 ALTER
+_EMBEDDING_STATE_HEALTH_ALTERS = (
+    'ALTER TABLE embedding_state ADD COLUMN IF NOT EXISTS last_ok_at TIMESTAMPTZ',
+    'ALTER TABLE embedding_state ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ',
+    'ALTER TABLE embedding_state ADD COLUMN IF NOT EXISTS last_error_kind TEXT',
+    'ALTER TABLE embedding_state ADD COLUMN IF NOT EXISTS last_error_msg TEXT',
+)
 
 _state_ensured = False
 
@@ -162,6 +174,8 @@ def ensure_embedding_state() -> None:
     with pool.connection() as conn:
         conn.execute('SELECT pg_advisory_xact_lock(860425002)')
         conn.execute(_EMBEDDING_STATE_DDL)
+        for stmt in _EMBEDDING_STATE_HEALTH_ALTERS:
+            conn.execute(stmt)
         conn.execute(
             """INSERT INTO embedding_state (id, provider, model, dims)
                VALUES (1, %s, %s, %s) ON CONFLICT (id) DO NOTHING""",

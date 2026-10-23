@@ -28,6 +28,17 @@
         </div>
       </header>
 
+      <!-- 嵌入可用性预警：不可用时页面横幅（软提示不禁答，可关闭） -->
+      <el-alert
+        v-if="!embSummary.available && !embAlertDismissed"
+        class="emb-alert"
+        :title="embSummary.message || '知识库问答暂时不可用'"
+        type="warning"
+        show-icon
+        closable
+        @close="embAlertDismissed = true"
+      />
+
       <template v-if="kb">
         <!-- 指标条 -->
         <section class="metrics">
@@ -542,6 +553,7 @@ import {
   removeKbMember
 } from '@/api/knowledge'
 import { watchKb, stopWatch } from '@/composables/useParseWatcher'
+import { useEmbeddingSummary } from '@/composables/useEmbeddingSummary'
 import { getUsageStats } from '@/api/user'
 import { getDeptTree } from '@/api/department'
 import { kbStatusMap, docStatusMap, embeddingModels, parserOptions, llmModels } from '@/mock/knowledge'
@@ -1165,7 +1177,12 @@ const maxQuestions = computed(() =>
   Math.max(...(usage.value?.trend || [{ questions: 1 }]).map((d) => d.questions))
 )
 
+/* ===== 嵌入渠道可用性预警：页面级克制横幅（仅不可用时显示，可关闭） ===== */
+const { summary: embSummary, refresh: refreshEmbSummary } = useEmbeddingSummary()
+const embAlertDismissed = ref(false)
+
 onMounted(async () => {
+  refreshEmbSummary()
   await knowledgeStore.fetchDetail(route.params.id)
   resetConfigForm()
   loadDeptOptions()
@@ -1182,6 +1199,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.emb-alert {
+  margin-bottom: 16px;
+  border-radius: 8px;
+}
+
 .detail-head {
   display: flex;
   align-items: flex-start;

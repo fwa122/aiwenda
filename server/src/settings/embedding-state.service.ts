@@ -31,4 +31,35 @@ export class EmbeddingStateService {
       );
     }
   }
+
+  /**
+   * 用户侧可用性摘要（登录可读，供聊天页/知识库页横幅预警）。
+   * 只输出 available + 面向用户的文案，不含渠道名/密钥/内部错误细节。
+   * 健康判定与 ai-service _derive_health 同口径：最近失败晚于最近成功视为 down。
+   * down 只预警不禁答（assertChatAvailable 不受影响），失败答案仍可由 LLM 兜底。
+   */
+  async getSummary(): Promise<{ available: boolean; message: string }> {
+    try {
+      const rows = await this.prisma.$queryRaw<{
+        phase: string;
+        last_ok_at: Date | null;
+        last_error_at: Date | null;
+      }[]>`
+        SELECT phase, last_ok_at, last_error_at FROM embedding_state WHERE id = 1
+      `;
+      const row = rows?.[0];
+      if (!row) return { available: true, message: '' };
+      if (row.phase && row.phase !== 'idle') {
+        return { available: false, message: '知识库正在更新，问答稍后恢复' };
+      }
+      const down =
+        !!row.last_error_at && (!row.last_ok_at || row.last_error_at > row.last_ok_at);
+      if (down) {
+        return { available: false, message: '知识库问答暂时不可用，请联系管理员' };
+      }
+      return { available: true, message: '' };
+    } catch {
+      return { available: true, message: '' };
+    }
+  }
 }

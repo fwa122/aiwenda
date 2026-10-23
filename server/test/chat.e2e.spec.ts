@@ -185,7 +185,7 @@ beforeAll(async () => {
       name: id,
       retrieverConfig: {},
       llmConfig: {},
-      visibility: 'internal',
+      visibility: 'PUBLIC', // v0.9.42 枚举大写化（旧 'internal'）：可见范围实际由 API-key scope 控制
       userId: `e2euser_${ADMIN_NAME}`,
     })),
   });

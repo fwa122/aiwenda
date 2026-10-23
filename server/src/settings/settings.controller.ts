@@ -3,6 +3,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { AiServiceClient } from '../integrations/ai-service.client';
+import { EmbeddingStateService } from './embedding-state.service';
 import { SettingsService } from './settings.service';
 import { UpdateSettingsDto, VerifyKeyDto } from './dto/settings.dto';
 
@@ -11,7 +12,8 @@ import { UpdateSettingsDto, VerifyKeyDto } from './dto/settings.dto';
 export class SettingsController {
   constructor(
     private readonly service: SettingsService,
-    private readonly ai: AiServiceClient
+    private readonly ai: AiServiceClient,
+    private readonly embeddingStateService: EmbeddingStateService,
   ) {}
 
   /** 所有登录用户可读（问答页需要读默认模型/检索参数） */
@@ -28,12 +30,29 @@ export class SettingsController {
     return this.service.update(dto);
   }
 
-  /** 嵌入渠道签名与全库重嵌入状态（admin）：签名 vs 当前配置变更检测 + 进度 + 成本预估 */
+  /** 嵌入渠道签名与全库重嵌入状态（admin）：签名 vs 当前配置变更检测 + 进度 + 成本预估 + 健康度 */
   @Get('embedding')
   @UseGuards(RolesGuard)
   @Roles('admin')
   embeddingState() {
     return this.ai.embeddingState();
+  }
+
+  /** 嵌入渠道可用性摘要（所有登录用户可读）：聊天页/知识库页横幅预警用。
+   *  仅含 available/message，不含渠道名/密钥/内部错误细节 */
+  @Get('embedding/summary')
+  embeddingSummary() {
+    return this.embeddingStateService.getSummary();
+  }
+
+  /** 主动探测嵌入渠道可用性（admin）：真实发一次嵌入调用并写回健康记录，
+   *  供设置页「检测可用性」按钮与重嵌入前阻断检查 */
+  @Post('embedding/probe')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @HttpCode(200)
+  probeEmbedding() {
+    return this.ai.probeEmbedding();
   }
 
   /** 触发全库重嵌入（admin）：前端确认框已核对成本与不可逆风险。

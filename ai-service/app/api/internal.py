@@ -4,6 +4,7 @@ import re
 import secrets
 import time
 import traceback
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field
 from .. import answer_cache, llm, parser, retrieval
 from ..config import settings
 from ..db import _embedding_cache_ddl, ensure_embedding_state, execute, fetch_all, fetch_one, pool
-from ..embedding import embed_query
+from ..embedding import EmbeddingError, embed_query, embed_texts, record_health
 from ..keystore import invalidate as keystore_invalidate
 from ..keystore import resolve_key as keystore_resolve_key
 from ..tasks import parse_document, reembed_document
@@ -22,7 +23,11 @@ from ..tasks import parse_document, reembed_document
 def safe_error_message(exc: Exception) -> str:
     """错误透出白名单：内部异常细节（SQL/连接串/SDK 堆栈）只进服务端日志，
     不随 SSE/HTTP 透传到 BFF 与前端。ValueError 是业务层有意抛出的可读错误
-    （如「ZHIPU_API_KEY 未配置」），保留原文供管理员排查。"""
+    （如「ZHIPU_API_KEY 未配置」），保留原文供管理员排查。
+    EmbeddingError.user_message 本就是面向用户的文案（欠费/鉴权/网络分类），
+    直接透出使前端 error-bar 可读。"""
+    if isinstance(exc, EmbeddingError):
+        return exc.user_message[:200]
     if isinstance(exc, ValueError):
         return str(exc)[:200]
     return 'AI 服务处理失败，请稍后重试'
@@ -207,6 +212,25 @@ def _embedding_state_row() -> dict | None:
         return None
 
 
+def _derive_health(row: dict | None) -> dict:
+    """从 embedding_state 健康列派生渠道状态：最近失败晚于最近成功视为 down。
+    last_error_msg 存的已是面向用户的可读文案（见 embedding.record_health）。"""
+    if not row:
+        return {'status': 'ok', 'lastOkAt': None, 'lastErrorAt': None,
+                'lastErrorKind': None, 'lastErrorMsg': None, 'userMessage': None}
+    last_ok = row.get('last_ok_at')
+    last_err = row.get('last_error_at')
+    down = bool(last_err) and (not last_ok or last_err > last_ok)
+    return {
+        'status': 'down' if down else 'ok',
+        'lastOkAt': last_ok,
+        'lastErrorAt': last_err,
+        'lastErrorKind': row.get('last_error_kind'),
+        'lastErrorMsg': row.get('last_error_msg'),
+        'userMessage': row.get('last_error_msg') if down else None,
+    }
+
+
 @router.get('/embedding/state')
 def embedding_state():
     """重嵌入总览：库内向量签名（存量向量构建渠道）vs 当前生效配置（检测变更）、
@@ -248,6 +272,7 @@ def embedding_state():
         'config': config,
         'needsReembed': signature != config,
         'phase': row['phase'] if row else 'idle',
+        'health': _derive_health(row),
         'progress': progress,
         'preview': {
             'docCount': stats['doc_count'],
@@ -256,6 +281,29 @@ def embedding_state():
             'estimatedTokens': int(stats['total_chars']) // 2,
         },
     }
+
+
+@router.post('/embedding/probe')
+def embedding_probe():
+    """主动探测嵌入渠道可用性（设置页「检测可用性」按钮 / 重嵌入前阻断检查）。
+    真实发一次 1 条短文本嵌入调用（mock 渠道直接 ok 不耗 API），结果写回健康记录。
+    无论可用与否都返回 200——探测失败是「结论」而非「异常」，由 ok 字段承载。"""
+    ensure_embedding_state()
+    started = time.time()
+    checked_at = datetime.now(timezone.utc).isoformat()
+    if settings.embedding_provider == 'mock':
+        record_health(ok=True)
+        return {'ok': True, 'kind': None, 'userMessage': None,
+                'latencyMs': 0, 'checkedAt': checked_at}
+    try:
+        embed_texts(['健康探测'])
+        record_health(ok=True)
+        return {'ok': True, 'kind': None, 'userMessage': None,
+                'latencyMs': int((time.time() - started) * 1000), 'checkedAt': checked_at}
+    except EmbeddingError as exc:
+        record_health(ok=False, kind=exc.kind, msg=exc.user_message)
+        return {'ok': False, 'kind': exc.kind, 'userMessage': exc.user_message,
+                'latencyMs': int((time.time() - started) * 1000), 'checkedAt': checked_at}
 
 
 @router.post('/embedding/reembed')
@@ -367,10 +415,14 @@ def search(body: SearchRequest):
         raise HTTPException(status_code=503, detail='知识库正在全库重嵌入，检索暂不可用，完成后自动恢复')
     start = time.time()
     meta: dict = {}
-    results = retrieval.search(
-        body.kbIds, body.query, body.topK, body.threshold,
-        hybrid=body.hybrid, rerank=body.rerank, meta=meta,
-    )
+    try:
+        results = retrieval.search(
+            body.kbIds, body.query, body.topK, body.threshold,
+            hybrid=body.hybrid, rerank=body.rerank, meta=meta,
+        )
+    except EmbeddingError as exc:
+        # 嵌入渠道不可用转 503 + 可读 detail（BFF 解析后透传检索测试页），其余异常照常 500
+        raise HTTPException(status_code=503, detail=exc.user_message) from exc
     return {
         'results': results,
         'elapsedMs': int((time.time() - start) * 1000),

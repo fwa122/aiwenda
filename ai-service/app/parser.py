@@ -1,7 +1,8 @@
 """文档解析：统一输出 blocks [{page, text, heading}]，heading 为标题路径。
 
 - PDF：字号启发式 + 常见标题模式识别，按标题分块（保留页码）；
-  线框表格转 Markdown 文本；无文本层页（扫描件）走智谱 glm-ocr 兜底
+  线框表格转 Markdown 文本；无文本层页（扫描件）走 VLM 文档解析兜底
+  （主:硅基流动 PaddleOCR-VL-1.5，回落:智谱 GLM-4.6V-Flash，均免费）
 - docx：按 Heading 样式层级维护标题栈；表格按 body 顺序转 Markdown 融合进正文
 - Markdown：按 # 层级维护标题栈（代码块内不误判）
 - txt/csv：无标题，整文件单块
@@ -155,23 +156,66 @@ def _ocr_pdf_pages(pages: list[tuple[int, object]]) -> list[dict]:
 
 
 def _ocr_page_image(page) -> str:
+    """扫描页 → VLM 文档解析转 Markdown。
+    主渠道：硅基流动 PaddleOCR-VL-1.5（免费）；失败自动回落智谱 GLM-4.6V-Flash（免费）。
+    两渠道均失败返回 ''（单页失败不阻断整档）。"""
     import base64
 
     pix = page.get_pixmap(dpi=150)  # 150dpi 足够 OCR，控制体积
     b64 = base64.b64encode(pix.tobytes('png')).decode()
-    try:
-        with httpx.Client(timeout=120.0) as client:
-            resp = client.post(
-                f'{settings.zhipu_base_url}/layout_parsing',
-                headers={'Authorization': f'Bearer {resolve_key("zhipu")}'},
-                json={'model': 'glm-ocr', 'file': f'data:image/png;base64,{b64}'},
-            )
-            resp.raise_for_status()
-            md = resp.json().get('md_results') or ''
-    except Exception as exc:  # noqa: BLE001  单页失败不阻断整档
-        print(f'[parser] OCR 第 {page.number + 1} 页失败: {exc}')
-        return ''
-    return md.strip()
+    data_url = f'data:image/png;base64,{b64}'
+    prompt = (
+        '你是文档解析引擎。将图片中的文档内容完整转换为 Markdown：'
+        '保持标题层级（#/##/###）、段落顺序，表格用 Markdown 表格语法，'
+        '仅输出转换结果，不要任何解释或额外内容。'
+    )
+    plans = [(settings.ocr_provider, settings.ocr_model), ('zhipu', 'glm-4.6v-flash')]
+    seen: set[tuple[str, str]] = set()
+    for provider, model in plans:  # 主回落同渠道时去重
+        if (provider, model) in seen:
+            continue
+        seen.add((provider, model))
+        for attempt in (1, 2):  # 免费档偶发 429/500，单渠道短重试一次
+            try:
+                return _ocr_via_vlm(provider, model, data_url, prompt, page)
+            except Exception as exc:  # noqa: BLE001  单渠道失败不阻断整档，走回落
+                print(f'[parser] OCR {provider}/{model} 第 {page.number + 1} 页'
+                      f'第 {attempt} 次失败: {exc}')
+                if attempt == 1:
+                    import time
+                    time.sleep(3.0)
+    return ''
+
+
+def _ocr_via_vlm(provider: str, model: str, data_url: str, prompt: str, page) -> str:
+    """OpenAI 兼容多模态 chat completions（图片 base64 → Markdown）。"""
+    if provider == 'siliconflow':
+        url = f'{settings.siliconflow_base_url}/chat/completions'
+        key = resolve_key('siliconflow')
+    elif provider == 'zhipu':
+        url = f'{settings.zhipu_base_url}/chat/completions'
+        key = resolve_key('zhipu')
+    else:
+        raise ValueError(f'未知 OCR 渠道: {provider}')
+    with httpx.Client(timeout=120.0) as client:
+        resp = client.post(
+            url,
+            headers={'Authorization': f'Bearer {key}'},
+            json={
+                'model': model,
+                'messages': [{'role': 'user', 'content': [
+                    {'type': 'image_url', 'image_url': {'url': data_url}},
+                    {'type': 'text', 'text': prompt},
+                ]}],
+                'max_tokens': 4096,
+                'temperature': 0.0,  # 文档解析必须确定性输出，否则随机乱码（实测默认温度会跑飞）
+                'stream': False,
+            },
+        )
+        resp.raise_for_status()
+        choices = resp.json().get('choices') or [{}]
+        text = (choices[0].get('message') or {}).get('content') or ''
+    return text.strip()
 
 
 # ============================== docx ==============================

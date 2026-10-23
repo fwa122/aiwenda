@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     zhipu_api_key: str = ''
     zhipu_base_url: str = 'https://open.bigmodel.cn/api/paas/v4'
 
-    # Moonshot Kimi（OpenAI 兼容；仅对话生成，embedding/rerank/OCR 仍走智谱）
+    # Moonshot Kimi（OpenAI 兼容；仅对话生成）
     moonshot_api_key: str = ''
     moonshot_base_url: str = 'https://api.moonshot.cn/v1'
     # K2.6 思考模式：disabled 保证问答响应速度；enabled 时思考内容不进 SSE 正文（回答前长空白）
@@ -46,9 +46,11 @@ class Settings(BaseSettings):
     # 0.03 双侧 margin ≥0.0039，跳过集合 {q07,q12,q18} 逐用例 delta=0，指标零损伤。
     rerank_skip_gap: float = 0.03
 
-    # OCR：扫描件 PDF 兜底（智谱 /paas/v4/layout_parsing，glm-ocr）
+    # OCR：扫描件 PDF 兜底（VLM 文档解析，OpenAI 兼容 chat completions 图片输入）
     ocr_enabled: bool = True
     ocr_max_pages: int = 20  # 单文档 OCR 页数上限，防失控
+    ocr_provider: str = 'siliconflow'  # siliconflow | zhipu；主渠道失败自动回落智谱 glm-4.6v-flash（均免费）
+    ocr_model: str = 'PaddlePaddle/PaddleOCR-VL-1.5'
 
     # LLM
     llm_model: str = 'glm-4-flash'

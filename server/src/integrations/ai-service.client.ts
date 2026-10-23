@@ -140,7 +140,9 @@ export class AiServiceClient {
       } catch {
         /* 保留状态码 */
       }
-      throw new Error(detail);
+      // 抛 HttpException 保留上游状态码与可读文案（400/409/503 均有可读 detail），
+      // 普通 Error 会被全局过滤器兜成 500 服务器内部错误导致文案丢失
+      throw new HttpException(detail, res.status);
     }
     return res.json();
   }
@@ -231,7 +233,9 @@ export class AiServiceClient {
       } catch {
         /* 保留状态码 */
       }
-      throw new Error(detail);
+      // 抛 HttpException 保留上游状态码与可读文案（400/409/503 均有可读 detail），
+      // 普通 Error 会被全局过滤器兜成 500 服务器内部错误导致文案丢失
+      throw new HttpException(detail, res.status);
     }
     return res.json();
   }
@@ -284,7 +288,9 @@ export class AiServiceClient {
       } catch {
         /* 保留状态码 */
       }
-      throw new Error(detail);
+      // 抛 HttpException 保留上游状态码与可读文案（400/409/503 均有可读 detail），
+      // 普通 Error 会被全局过滤器兜成 500 服务器内部错误导致文案丢失
+      throw new HttpException(detail, res.status);
     }
     return res.json();
   }

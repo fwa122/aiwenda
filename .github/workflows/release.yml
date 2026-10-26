@@ -65,3 +65,26 @@ jobs:
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ github.token }}
+
+  deploy:
+    name: 部署到云服务器（拉取镜像并重建）
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH 拉取部署
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd /opt/aiwenda
+            # 只拉会变的三个镜像（worker 与 ai-service 同镜像；pg/redis/minio 数据服务不动）
+            docker compose -f docker-compose.prod.yml pull server nginx ai-service
+            # server 入口自带 prisma migrate deploy（唯一 DDL 通道，见 v0.9.64 教训）
+            docker compose -f docker-compose.prod.yml up -d server nginx ai-service worker
+            sleep 15
+            curl -fsS -m 30 http://localhost:8080/ >/dev/null
+            echo "DEPLOY_OK"
+            docker ps --format '{{.Names}} {{.Status}}' | grep -E 'server|nginx|ai-service|worker'

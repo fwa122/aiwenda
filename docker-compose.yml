@@ -47,7 +47,8 @@ services:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - PORT=3000
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-kb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kb}?schema=public
+      # connection_limit/pool_timeout：连接池上限保护（P0-A2），防慢查询拖垮 Prisma 连接池连带全站 503
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-kb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kb}?schema=public&connection_limit=10&pool_timeout=10
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-120m}
@@ -63,6 +64,13 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 未配置}
       - MINIO_BUCKET=${MINIO_BUCKET:-kb-documents}
       - MINIO_SECURE=false
+      # SMTP 邮件（v0.9.47 注册邮箱验证/忘记密码；QQ 邮箱 smtp.qq.com:465 SSL，密码用授权码）
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_SECURE=${SMTP_SECURE:-true}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
     depends_on:
       postgres:
         condition: service_healthy

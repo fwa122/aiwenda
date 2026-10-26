@@ -93,10 +93,12 @@ def rewrite_query(question: str, history: list) -> str:
 
 def merge_adjacent(results: list[dict]) -> list[dict]:
     """同文档 chunkIndex 连续的片段合并：消除 overlap 重复、压缩引用条数。
-    保留组头（排名最高片段）的元信息。"""
+    保留组头（排名最高片段）的元信息。
+    图片切片（imageId 非空）不参与合并（v0.9.66）：图片切片解析顺序上紧跟文本切片，
+    相邻合并会把 imageId 连同组头一起吞掉，引用区从此拿不到原图。"""
     merged: list[dict] = []
     for r in results:
-        if merged:
+        if merged and not r.get('imageId') and not merged[-1].get('imageId'):
             last = merged[-1]
             if r['docId'] == last['docId'] and r['chunkIndex'] == last['chunkIndex'] + 1:
                 last['content'] = last['content'].rstrip() + '\n' + r['content'].lstrip()
@@ -108,11 +110,16 @@ def merge_adjacent(results: list[dict]) -> list[dict]:
 
 
 def build_context(results: list[dict]) -> str:
-    """按排名组装带编号的 context，超出字符预算后截断（尾部丢弃优于半截）。"""
+    """按排名组装带编号的 context，超出字符预算后截断（尾部丢弃优于半截）。
+    图片切片（v0.9.64）显式标注：让模型知道该引用的原图已自动展示给用户（v0.9.66）。"""
     parts: list[str] = []
     used = 0
     for i, r in enumerate(results):
-        seg = f"[{i + 1}] 来源：{r['docName']} 第{r['page']}页\n{r['content']}"
+        if r.get('imageId'):
+            head = f"[{i + 1}] 来源：{r['docName']} 第{r['page']}页（文档插图，该插图原图已自动展示在回答下方的引用来源中）"
+        else:
+            head = f"[{i + 1}] 来源：{r['docName']} 第{r['page']}页"
+        seg = f"{head}\n{r['content']}"
         if used + len(seg) > CONTEXT_CHAR_BUDGET:
             remain = CONTEXT_CHAR_BUDGET - used
             if remain > 200:  # 剩余空间充足则截断本段收尾
@@ -121,6 +128,15 @@ def build_context(results: list[dict]) -> str:
         parts.append(seg)
         used += len(seg)
     return '\n\n'.join(parts)
+
+
+# 检索命中图片切片时追加的系统说明（v0.9.66）：纠正模型「无法发图」的道歉式回答
+IMAGE_AWARE_PROMPT = (
+    '\n\n【插图展示机制】本轮检索结果包含标注「文档插图」的片段：这些片段对应的原文档插图，'
+    '系统已自动展示在回答下方的引用来源区域中，用户点击即可查看原图。'
+    '因此当用户询问图片、原图、插图，或所问内容与插图相关时，请直接依据插图片段的图说内容作答，'
+    '并提示用户「相关插图已展示在下方引用来源中」。不要回答「无法发送/展示图片」——系统具备该能力。'
+)
 
 
 class ParseTaskRequest(BaseModel):
@@ -486,6 +502,8 @@ def chat(body: ChatRequest):
             results = retrieval.search(
                 body.kbIds, search_query, body.topK, body.threshold,
                 hybrid=body.hybrid, rerank=body.rerank, query_vec=query_vec,
+                # 图片意图探测用用户原话：改写后的 search_query 消解指代后可能丢掉「图」字
+                intent_text=body.question,
             )
             results = merge_adjacent(results)
 
@@ -522,6 +540,9 @@ def chat(body: ChatRequest):
                 elif body.attachments:
                     # 纯附件问答：无知识库来源可编号，避免悬空引用
                     system_prompt += '\n请依据用户上传的附件内容回答，并在回答中自然提及所依据的附件文件名（不要使用 [编号] 引用格式）。'
+            # v0.9.66：命中图片切片时注入插图机制说明（纠正「无法发图」的道歉式回答）
+            if any(r.get('imageId') for r in results):
+                system_prompt += IMAGE_AWARE_PROMPT
 
             messages: list[dict] = [{'role': 'system', 'content': system_prompt}]
             messages.extend({'role': h.role, 'content': h.content} for h in body.history)

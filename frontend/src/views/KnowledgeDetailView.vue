@@ -990,7 +990,7 @@ function exportHardCases() {
 const configForm = reactive({
   name: '',
   description: '',
-  visibility: 'PRIVATE',
+  visibility: 'PUBLIC',
   orgId: '',
   embeddingModel: '',
   parser: 'smart',
@@ -1548,7 +1548,7 @@ onMounted(async () => {
 
 .bar-fill {
   width: 100%;
-  background: linear-gradient(180deg, #7e9cec, #3f6ae1);
+  background: linear-gradient(180deg, #ff8a63, #ff6a3d);
   border-radius: 4px 4px 0 0;
   transition: height 0.4s ease;
 }

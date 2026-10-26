@@ -12,6 +12,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/roles.guard';
+import { Roles } from '../common/roles.decorator';
 import { CurrentUser } from '../common/current-user.decorator';
 import { OperationLogService } from '../log/operation-log.service';
 import { AiServiceClient } from '../integrations/ai-service.client';
@@ -51,7 +53,10 @@ export class KnowledgeBaseController {
     return this.service.detail(id, user);
   }
 
+  // 建库：站长/超级管理员（v0.9.61 四级——管理员不参与知识库模块，普通用户仅问答）
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'super_admin')
   create(@Body() dto: CreateKbDto, @CurrentUser() user: any, @Ip() ip: string) {
     const result = this.service.create(dto, user);
     // 失败时异常交给 Nest 处理，日志仅在成功后记录（避免 unhandled rejection 崩溃进程）

@@ -16,15 +16,16 @@ GIN 索引（chunks_content_trgm_idx，启动时由 db.ensure_indexes 创建）�
 词法路失败（如扩展不可用）时自动降级为向量候选池内的字符二元组 Jaccard 兜底。
 """
 import httpx
+import re
 
 from .config import settings
-from .db import pool, fetch_all, vec_literal
+from .db import pool, fetch_all, fetch_one, vec_literal
 from .embedding import embed_query
 from .keystore import resolve_key
 
 # 向量召回：取候选池（top-N，N 远大于 topK）用于后续融合
 VECTOR_SQL = """
-SELECT c.id AS chunk_id, c.chunk_index, c.page, c.char_count, c.content,
+SELECT c.id AS chunk_id, c.chunk_index, c.page, c.char_count, c.content, c.image_id,
        d.id AS doc_id, d.name AS doc_name, d.type AS doc_type, d.kb_id,
        kb.name AS kb_name,
        1 - (c.embedding <=> %s::vector) AS score
@@ -39,7 +40,7 @@ LIMIT %s
 # 词法召回：独立一路，与向量路取并集
 # %%> 即 pg_trgm 的 %> 操作符（psycopg3 中 % 需转义为 %%），走 GIN 索引
 LEXICAL_SQL = """
-SELECT c.id AS chunk_id, c.chunk_index, c.page, c.char_count, c.content,
+SELECT c.id AS chunk_id, c.chunk_index, c.page, c.char_count, c.content, c.image_id,
        d.id AS doc_id, d.name AS doc_name, d.type AS doc_type, d.kb_id,
        kb.name AS kb_name,
        word_similarity(c.content, %s) AS lex_score
@@ -150,12 +151,65 @@ def _to_ref(row: dict, score: float) -> dict:
         'docType': row['doc_type'],
         'page': row['page'],
         'charCount': row['char_count'],
+        'imageId': row.get('image_id') or None,
         'score': round(score, 4),
         'content': row['content'],
     }
 
 
 def search(
+    kb_ids: list[str],
+    query: str,
+    top_k: int = 5,
+    threshold: float = 0.28,
+    hybrid: bool = False,
+    rerank: bool = False,
+    meta: dict | None = None,
+    query_vec: list[float] | None = None,
+    intent_text: str | None = None,
+) -> list[dict]:
+    """search 外壳：核心检索后做图片意图兜底（v0.9.66）。
+    问题含「图」类意图词但结果没有插图时，从命中库补一张最相关插图——
+    图说是图中文字的 OCR/描述，与「发原图给我」这类指令问句语义距离远，
+    正常排序进不了 Top-K，不兜底则模型看不到插图片段、继续道歉式回答。
+    intent_text：意图探测用文本（多轮改写消解指代可能丢「图」字，应传用户原话）。"""
+    refs = _search_core(kb_ids, query, top_k, threshold, hybrid, rerank, meta, query_vec)
+    try:
+        if (
+            refs
+            and not any(r.get('imageId') for r in refs)
+            and IMAGE_INTENT_RE.search(intent_text or query or '')
+        ):
+            vector = query_vec if query_vec is not None else embed_query(query)
+            row = fetch_one(IMAGE_ONLY_SQL, (vec_literal(vector), kb_ids, vec_literal(vector)))
+            if row and row['chunk_id'] not in {r['chunkId'] for r in refs}:
+                refs.append(_to_ref(row, float(row['score'])))
+                print(f'[retrieval] 图片意图兜底命中: {row["chunk_id"]} doc={row["doc_name"]}')
+    except Exception as exc:  # noqa: BLE001 兜底失败不影响主检索
+        print(f'[retrieval] 图片意图兜底失败（忽略）: {exc}')
+    return refs
+
+
+# 图片意图探测（v0.9.66）：问题提到「图」类词且检索无插图时，补一张最相关插图片段。
+# 弱信号探测——误中代价低（引用区多一张图），漏中代价高（模型对用户道歉「无法发图」）
+IMAGE_INTENT_RE = re.compile(r'图片|原图|插图|图像|图示|照片|图表|流程图|架构图|示意图|示意图|天梯|图')
+
+# 仅图片切片的向量召回（兜底专用，忽略阈值：用户显式要看图）
+IMAGE_ONLY_SQL = """
+SELECT c.id AS chunk_id, c.chunk_index, c.page, c.char_count, c.content, c.image_id,
+       d.id AS doc_id, d.name AS doc_name, d.type AS doc_type, d.kb_id,
+       kb.name AS kb_name,
+       1 - (c.embedding <=> %s::vector) AS score
+FROM chunks c
+JOIN documents d ON d.id = c.doc_id
+JOIN knowledge_bases kb ON kb.id = c.kb_id
+WHERE c.kb_id = ANY(%s) AND c.embedding IS NOT NULL AND c.image_id IS NOT NULL
+ORDER BY c.embedding <=> %s::vector
+LIMIT 1
+"""
+
+
+def _search_core(
     kb_ids: list[str],
     query: str,
     top_k: int = 5,

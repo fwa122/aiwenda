@@ -11,7 +11,7 @@ export const mockKnowledgeBases = [
     name: '产品与研发文档中心',
     description: '包含产品白皮书、接入指南、API 说明与版本变更记录，用于支撑研发与售前问答。',
     icon: 'Collection',
-    color: '#3f6ae1',
+    color: '#ff6a3d',
     status: 'ready', // ready | indexing | draft
     docCount: 5,
     chunkCount: 486,
@@ -133,7 +133,7 @@ export const mockKnowledgeBases = [
     name: '人事行政制度库',
     description: '员工手册、考勤假期、差旅报销等内部制度，供全员自助查询。',
     icon: 'User',
-    color: '#18a058',
+    color: '#3d9a6c',
     status: 'ready',
     docCount: 3,
     chunkCount: 212,
@@ -216,7 +216,7 @@ export const mockKnowledgeBases = [
     name: '客户服务知识库',
     description: '客服话术、退换货政策、投诉处理流程与 SLA 约定，用于一线坐席辅助。',
     icon: 'Service',
-    color: '#e37318',
+    color: '#d4823d',
     status: 'ready',
     docCount: 4,
     chunkCount: 356,
@@ -393,17 +393,17 @@ export const mockKnowledgeBases = [
   }
 ]
 
-/** 文档类型映射（图标 / 颜色 / 名称） */
+/** 文档类型映射（图标 / 颜色 / 名称）——暖纸书卷调色板 */
 export const docTypeMap = {
-  pdf: { label: 'PDF', color: '#e34d59', icon: 'Document' },
-  docx: { label: 'Word', color: '#3f6ae1', icon: 'Document' },
-  doc: { label: 'Word', color: '#3f6ae1', icon: 'Document' },
-  xlsx: { label: 'Excel', color: '#18a058', icon: 'Tickets' },
-  pptx: { label: 'PPT', color: '#e37318', icon: 'DataBoard' },
-  md: { label: 'Markdown', color: '#646a73', icon: 'EditPen' },
-  txt: { label: 'TXT', color: '#8f959e', icon: 'Document' },
-  html: { label: 'HTML', color: '#8b5cf6', icon: 'Link' },
-  csv: { label: 'CSV', color: '#18a058', icon: 'Tickets' }
+  pdf: { label: 'PDF', color: '#d95757', icon: 'Document' },
+  docx: { label: 'Word', color: '#d4823d', icon: 'Document' },
+  doc: { label: 'Word', color: '#d4823d', icon: 'Document' },
+  xlsx: { label: 'Excel', color: '#3d9a6c', icon: 'Tickets' },
+  pptx: { label: 'PPT', color: '#c2659a', icon: 'DataBoard' },
+  md: { label: 'Markdown', color: '#5d5749', icon: 'EditPen' },
+  txt: { label: 'TXT', color: '#8a8272', icon: 'Document' },
+  html: { label: 'HTML', color: '#b8893d', icon: 'Link' },
+  csv: { label: 'CSV', color: '#3d9a6c', icon: 'Tickets' }
 }
 
 /** 文档状态映射 */

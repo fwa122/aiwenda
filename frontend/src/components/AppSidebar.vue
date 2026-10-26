@@ -1,7 +1,7 @@
 <template>
   <aside class="sidebar">
-    <!-- 品牌区 -->
-    <div class="brand">
+    <!-- 品牌区（点击返回官网首页） -->
+    <div class="brand" @click="$router.push({ name: 'landing' })" title="返回官网首页" style="cursor: pointer;">
       <div class="brand-logo">
         <el-icon :size="16"><ChatDotRound /></el-icon>
       </div>
@@ -42,7 +42,7 @@
         <span>收藏夹</span>
       </router-link>
       <router-link
-        v-if="userStore.profile?.role === 'admin'"
+        v-if="userStore.isPlatform"
         to="/analytics"
         class="nav-item"
         :class="{ active: isActive('/analytics') }"
@@ -52,7 +52,7 @@
       </router-link>
       <router-link to="/settings" class="nav-item" :class="{ active: isActive('/settings') }">
         <el-icon :size="16"><Setting /></el-icon>
-        <span>系统设置</span>
+        <span>{{ userStore.canManageUsers ? '系统设置' : '个人设置' }}</span>
       </router-link>
     </nav>
 
@@ -424,7 +424,7 @@ function handleCommand(cmd) {
   font-size: 13px;
   font-weight: 600;
   color: #fff;
-  background: linear-gradient(135deg, #6b8ff5, #3f6ae1);
+  background: linear-gradient(135deg, #ff9a70, #ff6a3d);
   border-radius: 50%;
 }
 

@@ -30,7 +30,7 @@ function tryRefresh() {
   if (!rt) return Promise.reject(new Error('no refresh token'))
   if (!refreshing) {
     refreshing = axios
-      .post(`${http.defaults.baseURL}/auth/refresh`, { refreshToken: rt })
+      .post(`${http.defaults.baseURL}/v1/auth/refresh`, { refreshToken: rt })
       .then((res) => {
         const body = res.data
         if (body && body.code === SUCCESS_CODE && body.data && body.data.token) {
@@ -49,11 +49,42 @@ function tryRefresh() {
   return refreshing
 }
 
+/**
+ * 强制登出（v0.9.65 幂等化）：
+ * token 过期瞬间页面并发 N 个请求全部 401，刷新失败时 N 个 catch 会同时调本函数——
+ * 旧实现会弹 N 次提示 + N 个 600ms 定时器，用户重新登录后迟到的定时器仍会触发，
+ * 把刚登录的用户拽回 /login（表象即「重新登录后仍提示登录已过期」）。
+ * 现在：同一轮登出只处理一次；延迟到回调时刻再确认——若用户已重新登录
+ * （localStorage.kb_token 被重新写入）则放弃提示与跳转。
+ */
+let logoutPending = false
+let logoutTimer = null
+
 function forceRelogin(message) {
   localStorage.removeItem('kb_token')
   localStorage.removeItem('kb_refresh_token')
-  ElMessage.error(message || '登录已过期，请重新登录')
-  window.location.href = '/login'
+  if (logoutPending) return
+  logoutPending = true
+  logoutTimer = setTimeout(() => {
+    logoutTimer = null
+    // 已被重新登录（如竞态期间用户完成了登录）→ 放弃跳转并复位
+    if (localStorage.getItem('kb_token')) {
+      logoutPending = false
+      return
+    }
+    ElMessage.error(message || '登录已过期，请重新登录')
+    // 稍等片刻再整页跳转：给 ElMessage 留出可见时间（立即跳转会被刷新吞掉）
+    setTimeout(() => { window.location.href = '/login' }, 600)
+  }, 600)
+}
+
+/** 登录/注册成功后调用：复位登出流程，此后迟到的 401 不再触发弹窗与跳转 */
+export function notifyAuthRecovered() {
+  logoutPending = false
+  if (logoutTimer) {
+    clearTimeout(logoutTimer)
+    logoutTimer = null
+  }
 }
 
 http.interceptors.response.use(

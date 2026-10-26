@@ -74,7 +74,7 @@ export function createKnowledge(payload) {
       name: payload.name,
       description: payload.description || '',
       icon: 'Collection',
-      color: '#3f6ae1',
+      color: '#ff6a3d',
       status: 'draft',
       docCount: 0,
       chunkCount: 0,
@@ -93,7 +93,7 @@ export function createKnowledge(payload) {
         hybrid: payload.hybrid ?? true
       },
       llm: payload.llm || { provider: 'qwen', model: 'qwen2.5-72b-instruct', temperature: 0.3 },
-      visibility: payload.visibility || 'PRIVATE',
+      visibility: payload.visibility || 'PUBLIC',
       owner: '当前用户',
       memberCount: 1,
       createdAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
@@ -514,11 +514,50 @@ export function removeKbMember(kbId, memberId) {
    ========================================================================== */
 
 /**
+ * 获取文档插图原图 Blob（v0.9.64 方案B：引用命中图片切片时展示）。
+ * 会话级缓存（上限 30 张，LRU）：同一图片多消息引用不重复请求。
+ */
+const docImageCache = new Map()
+const DOC_IMAGE_CACHE_MAX = 30
+
+export async function fetchDocumentImage(imageId) {
+  if (docImageCache.has(imageId)) {
+    const blob = docImageCache.get(imageId)
+    docImageCache.delete(imageId)
+    docImageCache.set(imageId, blob)
+    return blob
+  }
+  const token = localStorage.getItem('kb_token')
+  const res = await fetch(`/api/v1/documents/images/${imageId}/file`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  if (!res.ok) throw new Error(`图片加载失败（HTTP ${res.status}）`)
+  const blob = await res.blob()
+  if (docImageCache.size >= DOC_IMAGE_CACHE_MAX) {
+    docImageCache.delete(docImageCache.keys().next().value)
+  }
+  docImageCache.set(imageId, blob)
+  return blob
+}
+
+/**
  * 获取文档原始文件 Blob。
  * 走原生 fetch 携带 JWT（iframe 无法带 Authorization header，故不用 <img src> 直链）；
  * 原生 fetch 天然绕过 axios 响应拦截器的 JSON 解包，二进制响应零改造。
+ * v0.9.63：inline 模式加会话级缓存（引用页快照/预览抽屉共用，同文档只下载一次）；
+ * FIFO 淘汰上限 8 份。attachment（下载）不走缓存——服务端对下载记审计日志，必须真实请求。
  */
+const docFileCache = new Map()
+const DOC_FILE_CACHE_MAX = 8
+
 export async function fetchDocumentFile(docId, mode = 'inline') {
+  if (mode === 'inline' && docFileCache.has(docId)) {
+    const blob = docFileCache.get(docId)
+    // LRU 触碰：删了重插，保持最近使用的在队尾
+    docFileCache.delete(docId)
+    docFileCache.set(docId, blob)
+    return blob
+  }
   const token = localStorage.getItem('kb_token')
   const res = await fetch(`/api/v1/documents/${docId}/file?mode=${mode}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
@@ -533,7 +572,15 @@ export async function fetchDocumentFile(docId, mode = 'inline') {
     }
     throw new Error(message)
   }
-  return res.blob()
+  const blob = await res.blob()
+  if (mode === 'inline') {
+    if (docFileCache.size >= DOC_FILE_CACHE_MAX) {
+      const oldest = docFileCache.keys().next().value
+      docFileCache.delete(oldest)
+    }
+    docFileCache.set(docId, blob)
+  }
+  return blob
 }
 
 /** 下载文档原始文件（Blob → 隐藏 <a download> 触发浏览器保存；attachment 模式服务端记审计日志） */

@@ -218,6 +218,37 @@ def _ocr_via_vlm(provider: str, model: str, data_url: str, prompt: str, page) ->
     return text.strip()
 
 
+def caption_image(img_bytes: bytes, page_no: int = 0) -> str:
+    """文档内嵌插图 → VLM 中文图说。
+    渠道链与 OCR 同构：主智谱 glm-4.6v-flash（免费）→ 回落硅基流动 PaddleOCR-VL
+    （文档 VLM，会输出图内文字，对检索同样有效）；单渠道 429/失败指数退避；
+    全部失败返回 ''（该图不入库，单图失败不阻断整档）。"""
+    import base64
+    import time
+
+    b64 = base64.b64encode(img_bytes).decode()
+    data_url = f'data:image/png;base64,{b64}'
+    prompt = (
+        '请用中文简要描述这张文档插图：图片类型、主体内容、'
+        '图中出现的关键文字与数据。120字以内，直接输出描述本身，不要任何前缀或解释。'
+    )
+    plans = [('zhipu', 'glm-4.6v-flash'), ('siliconflow', settings.ocr_model)]
+    seen: set[tuple[str, str]] = set()
+    for provider, model in plans:
+        if (provider, model) in seen:
+            continue
+        seen.add((provider, model))
+        for attempt in (1, 2):
+            try:
+                text = _ocr_via_vlm(provider, model, data_url, prompt, None)
+                return text[:600]
+            except Exception as exc:  # noqa: BLE001
+                print(f'[parser] 图说生成失败（第{page_no + 1}页 {provider}/{model} 第{attempt}次）: {exc}')
+                if attempt < 2:
+                    time.sleep(5.0)
+    return ''
+
+
 # ============================== docx ==============================
 
 def _parse_docx(path: str) -> list[dict]:

@@ -27,9 +27,10 @@ model User {
   username     String    @unique @db.VarChar(64)
   passwordHash String    @map("password_hash") @db.VarChar(255)
   nickname     String?   @db.VarChar(64)
-  email        String?   @db.VarChar(128)
+  // 唯一（忘记密码按邮箱发码重置的前提）；存量重复行已由迁移去重（保留最早注册行）
+  email        String?   @unique @db.VarChar(128)
   phone        String?   @db.VarChar(32)
-  role         String    @default("viewer") @db.VarChar(16) // admin | editor | viewer
+  role         String    @default("viewer") @db.VarChar(16) // owner | super_admin | admin | viewer（四级，v0.9.61）
   department   String?   @db.VarChar(64)
   status       String    @default("active") @db.VarChar(16) // active | disabled
   // 令牌版本：改密/封禁时自增，签发时写入 JWT（ver），校验时比对——不等即 401，
@@ -132,9 +133,10 @@ model Role {
 // 知识库
 // ============================================================================
 
-// 可见性三态（数据范围过滤）：
-// PRIVATE 仅 owner、admin 与库成员；DEPT 归属部门（含子树）成员自动只读可见；
-// PUBLIC 全员只读可见。编辑权三种可见性下统一走 KbMember（owner/admin/editor）
+// 可见性三态（数据范围过滤）：PUBLIC 全员只读可见（默认，注册即读）；
+// DEPT 归属部门（含子树）成员自动只读可见；PRIVATE 仅 owner、admin 与库成员
+// （私密库由 owner 手动邀请成员，不提供申请通道）。
+// 编辑权三种可见性下统一走 KbMember（owner/admin/editor）
 enum KbVisibility {
   PRIVATE
   DEPT
@@ -167,7 +169,9 @@ model KnowledgeBase {
   // llm: { provider, model, temperature }
   llmConfig Json @map("llm_config")
 
-  visibility  KbVisibility @default(PRIVATE)
+  // 开放策略（v0.9.46）：注册即全员只读——PUBLIC 为默认；PRIVATE 库由 owner 手动邀请成员，
+  // 不提供申请通道（特权授予/撤销仅 owner/admin 亲自操作）
+  visibility  KbVisibility @default(PUBLIC)
   owner       String? @db.VarChar(64)
   // 归属用户（可空；NULL 视为遗留公共资源，仅 admin 可写）
   userId      String? @map("user_id")
@@ -180,6 +184,7 @@ model KnowledgeBase {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   documents Document[]
+  images    DocumentImage[]
   chunks    Chunk[]
   evalCases EvalCase[]
   members   KbMember[]
@@ -266,10 +271,34 @@ model Document {
 
   knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
   chunks        Chunk[]
+  images        DocumentImage[]
 
   @@index([kbId, status])
   @@index([kbId, updatedAt])
   @@map("documents")
+}
+
+// ============================================================================
+// 文档图片（v0.9.64 方案B：解析期抽取原图 + VLM 图说，回答引用带原图）
+// 注意：embedding 相关操作仍由 Python 服务经 $queryRaw 完成；本表仅存元数据
+// ============================================================================
+model DocumentImage {
+  id         String @id // img_xxx
+  docId      String @map("doc_id")
+  kbId       String @map("kb_id")
+  page       Int    @default(1)
+  storageKey String @map("storage_key")
+  caption    String @default("") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  document      Document      @relation(fields: [docId], references: [id], onDelete: Cascade)
+  chunks        Chunk[]
+
+  @@index([docId])
+  @@index([kbId])
+  @@map("document_images")
 }
 
 // ============================================================================
@@ -290,10 +319,14 @@ model Chunk {
   /// HNSW 索引在迁移 SQL 中手动创建（Prisma 不支持在 schema 中声明）
   embedding Unsupported("vector(1024)")?
 
+  /// 图片切片关联原图（v0.9.64）：图说文本生成的切片指向 document_images 行
+  imageId String? @map("image_id")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
   document      Document      @relation(fields: [docId], references: [id], onDelete: Cascade)
+  image         DocumentImage? @relation(fields: [imageId], references: [id], onDelete: SetNull)
 
   @@index([docId])
   @@index([kbId])

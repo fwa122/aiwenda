@@ -95,6 +95,10 @@ export class KnowledgeBaseService {
   }
 
   async list(query: { keyword?: string; status?: string; page?: number; pageSize?: number }, user: SessionUser) {
+    const isAdmin = hasAllScope(user);
+    const page = Number(query.page) || 1;
+    const pageSize = Number(query.pageSize) || 20;
+
     const and: Prisma.KnowledgeBaseWhereInput[] = [
       this.visibilityFilter(user, await this.deptScope(user)),
     ];
@@ -108,9 +112,6 @@ export class KnowledgeBaseService {
     }
     if (query.status) and.push({ status: query.status });
     const where: Prisma.KnowledgeBaseWhereInput = { AND: and };
-
-    const page = Number(query.page) || 1;
-    const pageSize = Number(query.pageSize) || 20;
 
     const [list, total] = await this.prisma.$transaction([
       this.prisma.knowledgeBase.findMany({
@@ -202,7 +203,7 @@ export class KnowledgeBaseService {
         chunkSize: dto.chunkSize ?? 512,
         chunkOverlap: dto.chunkOverlap ?? 64,
         parser: dto.parser ?? 'smart',
-        visibility: dto.visibility ?? 'PRIVATE',
+        visibility: dto.visibility ?? 'PUBLIC',
         orgId,
         owner: user.username,
         userId: user.id,

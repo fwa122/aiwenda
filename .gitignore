@@ -40,3 +40,7 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .trae/
+
+# 本地测试素材（图片/PDF 等，不上仓库）
+/test/
+

@@ -88,9 +88,9 @@ const features = [
   height: 52px;
   margin-bottom: 18px;
   color: #fff;
-  background: linear-gradient(135deg, #6b8ff5, #3f6ae1);
+  background: linear-gradient(135deg, #ff9a70, #ff6a3d);
   border-radius: 16px;
-  box-shadow: 0 6px 20px rgba(63, 106, 225, 0.22);
+  box-shadow: 0 6px 20px rgba(255, 106, 61, 0.25);
 }
 
 .title {

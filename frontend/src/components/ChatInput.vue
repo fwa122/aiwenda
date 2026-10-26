@@ -46,8 +46,9 @@
 
       <div class="toolbar">
         <div class="toolbar-left">
-          <!-- 知识库选择 -->
+          <!-- 知识库：v0.9.62 起默认全库检索官方文档，不再让用户手选（kbLocked 固定展示） -->
           <el-select
+            v-if="!kbLocked"
             :model-value="kbIds"
             multiple
             collapse-tags
@@ -69,6 +70,10 @@
               <span class="opt-meta">{{ kb.docCount }} 个文档</span>
             </el-option>
           </el-select>
+          <el-tag v-else effect="plain" size="small" class="kb-locked-tag">
+            <el-icon :size="12"><Collection /></el-icon>
+            官方知识库 · 全库检索
+          </el-tag>
 
           <!-- 模型选择 -->
           <el-select
@@ -210,6 +215,8 @@ const props = defineProps({
   streaming: { type: Boolean, default: false },
   kbIds: { type: Array, default: () => [] },
   kbOptions: { type: Array, default: () => [] },
+  /** v0.9.62：true 时隐藏库选择下拉，展示「官方知识库 · 全库检索」标签（默认全库模式） */
+  kbLocked: { type: Boolean, default: false },
   model: { type: String, default: '' },
   modelOptions: { type: Array, default: () => [] },
   quickPrompts: { type: Array, default: () => [] },
@@ -496,6 +503,15 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 
 .kb-select {
   width: 168px;
+}
+
+.kb-locked-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  border-radius: 999px;
+  color: var(--c-text-2);
 }
 
 .model-select {

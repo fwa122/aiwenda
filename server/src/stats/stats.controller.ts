@@ -17,7 +17,7 @@ export class StatsController {
   /** 用户用量排行（仅 admin） */
   @Get('users')
   @UseGuards(RolesGuard)
-  @Roles('admin')
+  @Roles('owner', 'super_admin')
   users() {
     return this.service.usersUsage();
   }
@@ -25,7 +25,7 @@ export class StatsController {
   /** 成本分析：Token 按模型/按用户聚合 + 日趋势（仅 admin） */
   @Get('cost')
   @UseGuards(RolesGuard)
-  @Roles('admin')
+  @Roles('owner', 'super_admin')
   cost(@Query('days') days?: string) {
     return this.service.cost(Number(days) || 30);
   }
@@ -33,7 +33,7 @@ export class StatsController {
   /** 评价分析：点赞点踩汇总 + 日趋势 + 最近差评明细（仅 admin） */
   @Get('feedback')
   @UseGuards(RolesGuard)
-  @Roles('admin')
+  @Roles('owner', 'super_admin')
   feedback(@Query('days') days?: string) {
     return this.service.feedback(Number(days) || 30);
   }

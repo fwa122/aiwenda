@@ -273,7 +273,7 @@ function confirmDislike() {
 }
 
 .avatar.user {
-  background: linear-gradient(135deg, #6b8ff5, #3f6ae1);
+  background: linear-gradient(135deg, #ff9a70, #ff6a3d);
 }
 
 .avatar:not(.user) {

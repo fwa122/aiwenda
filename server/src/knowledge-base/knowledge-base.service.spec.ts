@@ -115,13 +115,13 @@ describe('KnowledgeBaseService.list 部门过滤', () => {
 });
 
 describe('KnowledgeBaseService.create', () => {
-  it('orgId 默认取创建人主部门，visibility 默认 PRIVATE', async () => {
+  it('orgId 默认取创建人主部门，visibility 默认 PUBLIC（注册即全员可读）', async () => {
     const prisma = makePrisma();
     prisma.userDepartment.findFirst.mockResolvedValue({ deptId: 'dept_a' });
     prisma.knowledgeBase.create.mockImplementation(({ data }: any) => Promise.resolve(data));
     const kb: any = await makeService(prisma).create({ name: '新库' } as any, owner);
     expect(kb.orgId).toBe('dept_a');
-    expect(kb.visibility).toBe('PRIVATE');
+    expect(kb.visibility).toBe('PUBLIC');
     expect(kb.myRole).toBe('owner');
   });
 

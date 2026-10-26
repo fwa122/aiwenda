@@ -1,46 +1,50 @@
 /* ==========================================================================
-   全局设计令牌（简易风格：低饱和色、弱阴影、克制的强调色）
+   全局设计令牌（暖纸书卷风：奶油纸底、墨色文字、橘色强调，与官网/登录页同语言）
    ========================================================================== */
 :root {
-  /* 中性色 */
-  --c-bg: #ffffff;
-  --c-bg-soft: #f7f8fa;
-  --c-bg-hover: #f2f3f5;
-  --c-bg-active: #eceef1;
-  --c-border: #e6e8eb;
-  --c-border-soft: #f0f1f3;
-  --c-text: #1f2329;
-  --c-text-2: #646a73;
-  --c-text-3: #8f959e;
-  --c-text-4: #a8adb5;
+  /* 中性色（纸与墨） */
+  --c-bg: #fffdf7;
+  --c-bg-soft: #faf6ee;
+  --c-bg-hover: #f5efe2;
+  --c-bg-active: #efe7d5;
+  --c-border: #e5dcc8;
+  --c-border-soft: #ede4d0;
+  --c-text: #33302a;
+  --c-text-2: #5d5749;
+  --c-text-3: #8a8272;
+  --c-text-4: #a89f8d;
 
-  /* 强调色（仅用于可点击元素与状态标识，不做大面积背景渲染） */
-  --brand: #3f6ae1;
-  --brand-hover: #3560d6;
-  --brand-active: #2c53bd;
-  --brand-soft: #eef3ff;
-  --brand-soft-2: #f6f9ff;
+  /* 强调色（橘，仅用于可点击元素与状态标识，不做大面积背景渲染） */
+  --brand: #ff6a3d;
+  --brand-hover: #f55a2b;
+  --brand-active: #e84e20;
+  --brand-soft: #ffefe7;
+  --brand-soft-2: #fff6f0;
 
   /* 语义色 */
-  --c-success: #18a058;
-  --c-success-soft: #eaf7f0;
-  --c-warning: #e37318;
-  --c-warning-soft: #fdf3e7;
-  --c-danger: #e34d59;
-  --c-danger-soft: #fdeef0;
-  --c-info: #6b7280;
-  --c-info-soft: #f1f2f4;
+  --c-success: #3d9a6c;
+  --c-success-soft: #eaf5ee;
+  --c-warning: #d4823d;
+  --c-warning-soft: #faf1e4;
+  --c-danger: #d95757;
+  --c-danger-soft: #fbeeee;
+  --c-info: #8a8272;
+  --c-info-soft: #f3efe5;
 
-  /* 圆角 */
-  --radius-s: 6px;
-  --radius: 10px;
-  --radius-l: 14px;
-  --radius-xl: 18px;
+  /* 圆角（比旧版更大更圆润） */
+  --radius-s: 8px;
+  --radius: 12px;
+  --radius-l: 16px;
+  --radius-xl: 20px;
 
-  /* 阴影 */
-  --shadow-s: 0 1px 2px rgba(31, 35, 41, 0.04);
-  --shadow: 0 4px 16px rgba(31, 35, 41, 0.06);
-  --shadow-l: 0 8px 32px rgba(31, 35, 41, 0.1);
+  /* 阴影（暖棕调） */
+  --shadow-s: 0 1px 2px rgba(120, 95, 60, 0.06);
+  --shadow: 0 4px 16px rgba(120, 95, 60, 0.09);
+  --shadow-l: 0 8px 32px rgba(120, 95, 60, 0.14);
+
+  /* 字体 */
+  --serif: 'Songti SC', 'Noto Serif SC', 'STSong', 'SimSun', serif;
+  --mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, Menlo, monospace;
 
   /* 布局尺寸 */
   --sidebar-w: 260px;
@@ -48,11 +52,11 @@
 
   /* Element Plus 主题变量覆盖 */
   --el-color-primary: var(--brand);
-  --el-color-primary-light-3: #7e9cec;
-  --el-color-primary-light-5: #a8bdf3;
-  --el-color-primary-light-7: #ccd9f8;
-  --el-color-primary-light-8: #dee7fb;
-  --el-color-primary-light-9: #eef3ff;
+  --el-color-primary-light-3: #ff8a63;
+  --el-color-primary-light-5: #ffb499;
+  --el-color-primary-light-7: #ffd4c2;
+  --el-color-primary-light-8: #ffe2d6;
+  --el-color-primary-light-9: #fff0e8;
   --el-color-success: var(--c-success);
   --el-color-warning: var(--c-warning);
   --el-color-danger: var(--c-danger);
@@ -93,7 +97,14 @@ body {
   font-size: 14px;
   line-height: 1.6;
   color: var(--c-text);
-  background: var(--c-bg-soft);
+  /* 奶油纸底 + 纸张颗粒点阵（与官网同款质感） */
+  background-color: var(--c-bg-soft);
+  background-image:
+    radial-gradient(rgba(120, 100, 70, 0.04) 1px, transparent 1px),
+    radial-gradient(rgba(120, 100, 70, 0.03) 1px, transparent 1px);
+  background-size: 26px 26px, 34px 34px;
+  background-position: 0 0, 13px 17px;
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -126,12 +137,12 @@ button {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d8dbe0;
+  background: #ddd2bc;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #c2c6cc;
+  background: #c9bda2;
 }
 
 /* 细滚动条（侧栏、面板内列表） */
@@ -144,7 +155,7 @@ button {
 }
 
 .scroll-thin:hover::-webkit-scrollbar-thumb {
-  background: #dcdfe4;
+  background: #d6cab0;
 }
 
 /* ==========================================================================
@@ -255,7 +266,7 @@ button {
   padding: 8px 14px;
   color: var(--c-text-2);
   background: var(--c-bg-soft);
-  border-left: 3px solid var(--c-border);
+  border-left: 3px solid var(--brand);
   border-radius: 0 var(--radius-s) var(--radius-s) 0;
 }
 
@@ -267,10 +278,10 @@ button {
 
 .md-body code {
   padding: 2px 5px;
-  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12.5px;
-  color: #c7254e;
-  background: #f6f7f9;
+  color: #b4543a;
+  background: #f7f1e3;
   border-radius: 4px;
 }
 
@@ -278,7 +289,7 @@ button {
   margin: 12px 0;
   padding: 14px 16px;
   overflow-x: auto;
-  background: #f8f9fb;
+  background: #f8f4e9;
   border: 1px solid var(--c-border-soft);
   border-radius: var(--radius);
 }
@@ -405,7 +416,7 @@ button {
   to { opacity: 1; transform: none; }
 }
 
-/* Element Plus 细节微调，贴合简易风格 */
+/* Element Plus 细节微调，贴合暖纸书卷风 */
 .el-button {
   font-weight: 500;
 }
@@ -417,8 +428,10 @@ button {
 }
 
 .el-dialog__title {
+  font-family: var(--serif);
   font-size: 16px;
   font-weight: 600;
+  letter-spacing: 1px;
 }
 
 .el-dialog__body {
@@ -453,5 +466,5 @@ button {
 }
 
 .el-tag {
-  border-radius: 4px;
+  border-radius: 999px;
 }

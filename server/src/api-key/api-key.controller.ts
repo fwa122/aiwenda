@@ -8,7 +8,7 @@ import { CreateApiKeyDto } from './dto/api-key.dto';
 
 @Controller('api-keys')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin')
+@Roles('owner', 'super_admin')
 export class ApiKeyController {
   constructor(private readonly service: ApiKeyService) {}
 

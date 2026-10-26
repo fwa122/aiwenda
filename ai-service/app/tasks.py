@@ -1,4 +1,5 @@
 """Celery 任务：文档解析 → 切片 → Embedding → 写 chunks"""
+import io
 import json
 import os
 import tempfile
@@ -13,7 +14,7 @@ from .config import settings
 from .db import HNSW_INDEX_SQL, execute, fetch_all, fetch_one, pool, vec_literal
 from .embedding import embed_texts_cached
 from .ids import gen_id
-from .parser import parse_file
+from .parser import caption_image, parse_file
 
 celery_app = Celery('ai_service', broker=settings.celery_broker_url)
 celery_app.conf.update(
@@ -96,6 +97,79 @@ def set_doc_status(doc_id: str, status: str, progress: int, extra_sql: str = '',
     )
 
 
+# ────────────────────────── 文档内嵌图片抽取入库（v0.9.64 方案B） ──────────────────────────
+
+# 抽图最小尺寸：过滤装饰线/小图标（正文插图一般 ≥120px）
+_IMG_MIN_SIZE = 120
+_IMG_MAX_PER_DOC = 20  # 单文档图数上限，防病态 PDF 拖垮解析与存储
+
+
+def _extract_pdf_images(path: str) -> list[tuple[int, bytes]]:
+    """PDF 内嵌位图抽取：fitz Pixmap 统一转 PNG（兼容 CMYK/alpha），按尺寸过滤+跨页去重。
+    返回 [(page_no_1based, png_bytes)]；失败返回 []（图片抽取不阻断文本解析）。"""
+    import fitz
+
+    out: list[tuple[int, bytes]] = []
+    seen_xrefs: set[int] = set()
+    try:
+        with fitz.open(path) as doc:
+            for pno, page in enumerate(doc, start=1):
+                for info in page.get_images(full=True):
+                    xref = info[0]
+                    if xref in seen_xrefs:
+                        continue
+                    seen_xrefs.add(xref)
+                    if len(out) >= _IMG_MAX_PER_DOC:
+                        return out
+                    try:
+                        pix = fitz.Pixmap(doc, xref)
+                        if pix.colorspace and pix.colorspace.n > 3:  # CMYK 等 → RGB
+                            pix = fitz.Pixmap(fitz.csRGB, pix)
+                        if pix.width < _IMG_MIN_SIZE or pix.height < _IMG_MIN_SIZE:
+                            continue
+                        out.append((pno, pix.tobytes('png')))
+                    except Exception as exc:  # noqa: BLE001 单图失败跳过
+                        print(f'[parse] 第{pno}页图片抽取失败（跳过）: {exc}')
+    except Exception as exc:  # noqa: BLE001
+        print(f'[parse] 图片抽取整体失败（仅文本入索引）: {exc}')
+    return out
+
+
+def _ingest_images(kb_id: str, doc_id: str, images: list[tuple[int, bytes]], start_index: int) -> int:
+    """图片 → VLM 图说 → 向量化 → MinIO 原图 + document_images 行 + 图片切片。
+    无图说的图不入库（不可检索的原图没有意义）；单图失败跳过不阻断。返回成功数。"""
+    client = get_minio()
+    ok = 0
+    for offset, (page_no, data) in enumerate(images):
+        try:
+            caption = caption_image(data, page_no)
+            if not caption:
+                continue
+            vector = embed_texts_cached([caption])[0]
+            image_id = gen_id('img')
+            storage_key = f'{kb_id}/{doc_id}/{image_id}.png'
+            client.put_object(
+                settings.minio_bucket, storage_key,
+                io.BytesIO(data), length=len(data), content_type='image/png',
+            )
+            execute(
+                'INSERT INTO document_images (id, doc_id, kb_id, page, storage_key, caption) '
+                'VALUES (%s, %s, %s, %s, %s, %s)',
+                (image_id, doc_id, kb_id, page_no, storage_key, caption),
+            )
+            content = f'【文档插图 · 图说】{caption}'
+            execute(
+                'INSERT INTO chunks (id, kb_id, doc_id, chunk_index, page, char_count, content, embedding, image_id) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector, %s)',
+                (gen_id('ck'), kb_id, doc_id, start_index + offset, page_no,
+                 len(content), content, vec_literal(vector), image_id),
+            )
+            ok += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f'[parse] 第{page_no}页图片入库失败（跳过）: {exc}')
+    return ok
+
+
 @celery_app.task(bind=True, max_retries=3)
 def parse_document(self, doc_id: str):
     row = fetch_one(
@@ -119,41 +193,50 @@ def parse_document(self, doc_id: str):
         path = fetch_doc_to_temp(storage_key)
         try:
             blocks = parse_file(path, ext)
+            # v0.9.64 方案B：文本解析同场抽取内嵌位图（仅 PDF；失败不影响文本链路）
+            raw_images = _extract_pdf_images(path) if ext == 'pdf' else []
         finally:
             try:
                 os.unlink(path)
             except OSError:
                 pass
+        # 重解析清理顺序：先删切片（图片切片 FK 指向 document_images），再删图片元数据
         execute('DELETE FROM chunks WHERE doc_id = %s', (doc_id,))
+        execute('DELETE FROM document_images WHERE doc_id = %s', (doc_id,))
         set_doc_status(doc_id, 'indexing', 40)
 
         # 2. 切片（heading 作为首行注入切片）
         chunks = chunk_blocks(blocks, row['chunk_size'], row['chunk_overlap'])
-        if not chunks:
+        if not chunks and not raw_images:
             raise ValueError('切片结果为空')
 
-        # 3. 批量向量化（内容 hash 缓存：未变更文本不再重复调嵌入 API）
-        vectors = embed_texts_cached([c['content'] for c in chunks])
+        if chunks:
+            # 3. 批量向量化（内容 hash 缓存：未变更文本不再重复调嵌入 API）
+            vectors = embed_texts_cached([c['content'] for c in chunks])
 
-        # 4. 批量写入 chunks（executemany，含向量）
-        rows = [
-            (
-                gen_id('ck'), kb_id, doc_id, i, chunk['page'],
-                len(chunk['content']), chunk['content'], vec_literal(vector),
-            )
-            for i, (chunk, vector) in enumerate(zip(chunks, vectors))
-        ]
-        with pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.executemany(
-                    """INSERT INTO chunks (id, kb_id, doc_id, chunk_index, page, char_count, content, embedding)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector)
-                       ON CONFLICT (doc_id, chunk_index) DO NOTHING""",
-                    rows,
+            # 4. 批量写入 chunks（executemany，含向量）
+            rows = [
+                (
+                    gen_id('ck'), kb_id, doc_id, i, chunk['page'],
+                    len(chunk['content']), chunk['content'], vec_literal(vector),
                 )
+                for i, (chunk, vector) in enumerate(zip(chunks, vectors))
+            ]
+            with pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        """INSERT INTO chunks (id, kb_id, doc_id, chunk_index, page, char_count, content, embedding)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector)
+                           ON CONFLICT (doc_id, chunk_index) DO NOTHING""",
+                        rows,
+                    )
+
+        # 4.5 图片入库（v0.9.64）：VLM 图说切片接在文本切片之后，chunk_index 顺延
+        image_count = _ingest_images(kb_id, doc_id, raw_images, start_index=len(chunks)) if raw_images else 0
+
         execute(
             'UPDATE documents SET status=%s, progress=%s, chunk_count=%s, updated_at=NOW() WHERE id=%s',
-            ('parsed', 100, len(chunks), doc_id),
+            ('parsed', 100, len(chunks) + image_count, doc_id),
         )
 
         # 5. 知识库计数 + 状态自愈：仅当库内已无任何进行中的文档时才归位 ready，
@@ -171,7 +254,7 @@ def parse_document(self, doc_id: str):
                WHERE id = %s""",
             (kb_id, kb_id, kb_id),
         )
-        return {'ok': True, 'docId': doc_id, 'chunks': len(chunks)}
+        return {'ok': True, 'docId': doc_id, 'chunks': len(chunks), 'images': image_count}
     except SoftTimeLimitExceeded:
         # 解析超时（>30 分钟）视为确定性失败，不进重试空转——
         # 同一文档重跑大概率仍超时（病态大文档/失控 OCR）；对账任务也不会重复捞它

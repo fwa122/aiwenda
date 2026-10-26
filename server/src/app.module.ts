@@ -2,11 +2,11 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
-import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import type Redis from 'ioredis';
 import { PrismaModule } from './prisma/prisma.module';
 import { REDIS_CLIENT, RedisModule } from './redis/redis.module';
 import { IpWhitelistGuard } from './common/ip-whitelist.guard';
+import { ResilientThrottlerStorage } from './common/resilient-throttler.storage';
 import { StorageModule } from './storage/storage.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
@@ -34,7 +34,8 @@ import { LogModule } from './log/log.module';
       inject: [REDIS_CLIENT],
       useFactory: (redis: Redis) => ({
         throttlers: [{ name: 'default', ttl: 60_000, limit: 300 }],
-        storage: new ThrottlerStorageRedisService(redis),
+        // 降级包装：Redis 故障时回退单实例内存计数，保证限流组件故障不致全站 500
+        storage: new ResilientThrottlerStorage(redis),
       }),
     }),
     PrismaModule,

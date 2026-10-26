@@ -10,12 +10,12 @@ const prisma = new PrismaClient();
  * - 幂等：按 username 查重，已存在则跳过，可安全重跑
  */
 const TEST_USERS = [
-  { id: 'u_seed_zhang', username: 'zhangsan', nickname: '张伟', role: 'editor', department: '研发部' },
+  { id: 'u_seed_zhang', username: 'zhangsan', nickname: '张伟', role: 'super_admin', department: '研发部' },
   { id: 'u_seed_li', username: 'lisi', nickname: '李娜', role: 'viewer', department: '研发部' },
-  { id: 'u_seed_wang', username: 'wangwu', nickname: '王芳', role: 'editor', department: '市场部' },
+  { id: 'u_seed_wang', username: 'wangwu', nickname: '王芳', role: 'super_admin', department: '市场部' },
   { id: 'u_seed_zhao', username: 'zhaoliu', nickname: '赵敏', role: 'viewer', department: '市场部' },
   { id: 'u_seed_sun', username: 'sunqi', nickname: '孙倩', role: 'viewer', department: '人事部' },
-  { id: 'u_seed_zhou', username: 'zhouba', nickname: '周杰', role: 'editor', department: '财务部' },
+  { id: 'u_seed_zhou', username: 'zhouba', nickname: '周杰', role: 'admin', department: '财务部' },
   { id: 'u_seed_wu', username: 'wujiu', nickname: '吴久', role: 'viewer', department: '' },
 ];
 
@@ -32,8 +32,8 @@ async function main() {
           id: 'u_admin',
           username: 'admin',
           passwordHash: await bcrypt.hash(adminPassword, 10),
-          nickname: '超级管理员',
-          role: 'admin',
+          nickname: '站长',
+          role: 'owner',
           status: 'active',
           department: '技术部',
         },

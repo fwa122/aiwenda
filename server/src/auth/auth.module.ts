@@ -7,6 +7,8 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { CaptchaService } from './captcha.service';
+import { EmailCodeService, MailService } from './mail.service';
 
 @Module({
   imports: [
@@ -23,7 +25,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       }),
     }),
   ],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, CaptchaService, MailService, EmailCodeService],
   controllers: [AuthController],
   exports: [PassportModule, AuthService, JwtAuthGuard],
 })

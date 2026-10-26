@@ -1,4 +1,4 @@
-import { request, mockOk, mockFail, paginate, USE_MOCK } from './request'
+import { request, mockOk, mockFail, paginate, USE_MOCK, notifyAuthRecovered } from './request'
 import {
   mockDb,
   mockSystemSettings,
@@ -30,21 +30,25 @@ export async function login(payload) {
   localStorage.setItem('kb_token', res.token)
   if (res.refreshToken) localStorage.setItem('kb_refresh_token', res.refreshToken)
   localStorage.setItem('kb_user', JSON.stringify(res.user))
+  notifyAuthRecovered() // 登录成功：复位强制登出流程（迟到的 401 不再弹窗/跳转）
   return res
 }
 
-/** 注册（成功后跳回登录页，不自动登录） */
-export function register(payload) {
-  const { username, password, nickname, email } = payload
+/** 注册（需邮箱验证码；v0.9.56 起服务端返回令牌对，注册即登录） */
+export async function register(payload) {
+  const { username, password, nickname, email, emailCode } = payload
   if (USE_MOCK) {
     if (mockDb.accounts.some((acc) => acc.username === username)) {
       return mockFail('用户名已存在', 300)
+    }
+    if (mockDb.users.some((u) => u.email && u.email === email)) {
+      return mockFail('该邮箱已被注册', 300)
     }
     const newUser = {
       id: uid('u'),
       username,
       nickname: nickname || username,
-      email: email || '',
+      email,
       role: 'viewer',
       roleName: '只读访客',
       department: '',
@@ -54,7 +58,56 @@ export function register(payload) {
     mockDb.accounts.push({ userId: newUser.id, username, password })
     return mockOk({ id: newUser.id, username }, 400)
   }
-  return request({ url: '/v1/auth/register', method: 'post', data: { username, password, nickname, email } })
+  const res = await request({
+    url: '/v1/auth/register',
+    method: 'post',
+    data: { username, password, nickname, email, emailCode }
+  })
+  // 注册即登录：服务端直接返回令牌对与档案，持久化方式与 login 一致
+  if (res?.token) {
+    localStorage.setItem('kb_token', res.token)
+    if (res.refreshToken) localStorage.setItem('kb_refresh_token', res.refreshToken)
+    localStorage.setItem('kb_user', JSON.stringify(res.user))
+    notifyAuthRecovered()
+  }
+  return res
+}
+
+/* ==========================================================================
+   验证码与忘记密码（v0.9.47）
+   ========================================================================== */
+
+/** 获取图形验证码（自绘 SVG；{ id, svg }，svg 直接 data URL 展示，5 分钟有效一次性） */
+export function getCaptcha() {
+  if (USE_MOCK) {
+    // mock：固定答案 abcd（仅演示链路，真实答案在服务端 Redis）
+    return mockOk({ id: 'mock_cap', svg: 'mock-captcha' }, 120)
+  }
+  return request({ url: '/v1/auth/captcha', method: 'get' })
+}
+
+/**
+ * 发送邮箱验证码：需先过图形验证码。
+ * scene=register 校验邮箱未被占用；scene=reset 未绑定邮箱静默成功（防枚举）。
+ * SMTP 未配置返回 503（message 含可读提示）。
+ */
+export function sendEmailCode({ scene, email, captchaId, captchaCode }) {
+  if (USE_MOCK) return mockOk({ sent: true }, 300)
+  return request({
+    url: '/v1/auth/email-code',
+    method: 'post',
+    data: { scene, email, captchaId, captchaCode }
+  })
+}
+
+/** 忘记密码重置（免原密码）：邮箱验证码校验 → 改密 + 全端下线 */
+export function resetPassword({ email, code, newPassword }) {
+  if (USE_MOCK) return mockOk(null, 300)
+  return request({
+    url: '/v1/auth/reset-password',
+    method: 'post',
+    data: { email, code, newPassword }
+  })
 }
 
 /** 退出登录 */

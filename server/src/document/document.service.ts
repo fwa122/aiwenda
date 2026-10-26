@@ -26,6 +26,15 @@ const MIME_BY_EXT: Record<string, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
 
+/** 抽取插图的 MIME 映射（ai-service 统一转 PNG 存储；映射留余量兼容历史对象） */
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
+
 /** 预览/下载打开的文件上下文：流来自 MinIO，大小取文档记录（写 Content-Length 用） */
 export interface FileWithStream {
   doc: { id: string; name: string; size: bigint; storageKey: string | null; [k: string]: unknown };
@@ -198,6 +207,12 @@ export class DocumentService {
     if (doc.storageKey) {
       await this.storage.remove(doc.storageKey);
     }
+    // v0.9.64：同步清理抽取的插图对象（document_images 行随文档级联删除）
+    const imageRows = await this.prisma.documentImage.findMany({
+      where: { docId },
+      select: { storageKey: true },
+    });
+    await Promise.all(imageRows.map((img) => this.storage.remove(img.storageKey)));
 
     await this.prisma.document.delete({ where: { id: docId } });
     // 返回名称供审计日志与前端展示使用
@@ -239,6 +254,26 @@ export class DocumentService {
     // 重解析将重建切片与向量：失效该库答案语义缓存
     this.ai.invalidateAnswerCache([kbId]);
     return { id: docId };
+  }
+
+  /**
+   * 文档插图原图（v0.9.64 方案B）：问答引用命中图片切片时前端按 imageId 取图。
+   * 权限完全跟随所属知识库（与 getFile 同口径）；storageKey 特征校验同 getFile。
+   */
+  async getImageFile(imageId: string, user: SessionUser) {
+    const image = await this.prisma.documentImage.findUnique({ where: { id: imageId } });
+    if (!image) throw new NotFoundException('图片不存在');
+    await this.assertKb(image.kbId, user);
+
+    const key = image.storageKey || '';
+    if (!key || key.includes('..') || key.startsWith('/')) {
+      throw new BadRequestException('非法文件路径');
+    }
+    const ext = (key.split('.').pop() || '').toLowerCase();
+    const contentType = IMAGE_MIME_BY_EXT[ext];
+    if (!contentType) throw new BadRequestException('不支持的图片类型');
+    const stream = await this.storage.get(key);
+    return { stream, contentType };
   }
 
   /** 文档切片列表（不含向量列，避免巨大 payload）。权限随所属知识库 */

@@ -3,14 +3,14 @@
     <div class="page-inner" style="max-width: 1000px">
       <header class="page-head">
         <div>
-          <h1 class="page-title">系统设置</h1>
-          <p class="page-desc">配置全局模型、检索与安全策略，管理密钥与成员</p>
+          <h1 class="page-title">{{ canManageUsers ? '系统设置' : '个人设置' }}</h1>
+          <p class="page-desc">{{ isPlatform ? '配置全局模型、检索与安全策略，管理密钥与成员' : canManageUsers ? '管理成员账号与角色' : '管理您的账号资料与登录密码' }}</p>
         </div>
       </header>
 
       <el-tabs v-model="activeTab" class="settings-tabs">
-        <!-- 模型参数 -->
-        <el-tab-pane label="模型参数" name="model">
+        <!-- 模型参数（admin） -->
+        <el-tab-pane v-if="isAdmin" label="模型参数" name="model">
           <el-form v-loading="loading" :model="settings.model" label-width="120px" class="setting-form">
             <el-form-item label="当前模型">
               <div class="readonly-model">
@@ -133,7 +133,7 @@
         </el-tab-pane>
 
         <!-- 检索参数 -->
-        <el-tab-pane label="检索参数" name="retrieval">
+        <el-tab-pane v-if="isAdmin" label="检索参数" name="retrieval">
           <el-form v-loading="loading" :model="settings.retrieval" label-width="120px" class="setting-form">
             <el-form-item label="默认 Top K">
               <el-input-number v-model="settings.retrieval.topK" :min="1" :max="20" />
@@ -334,7 +334,8 @@
             </el-form>
           </el-card>
 
-          <el-card v-loading="loading" shadow="never" class="sub-card">
+          <!-- 安全策略（admin）：全局配置仅管理员可见可改 -->
+          <el-card v-if="isAdmin" v-loading="loading" shadow="never" class="sub-card">
             <template #header><span class="card-title">安全策略</span></template>
             <el-form :model="settings.security" label-width="120px" class="setting-form">
               <el-form-item label="审计日志">
@@ -370,7 +371,7 @@
         </el-tab-pane>
 
         <!-- API 密钥 -->
-        <el-tab-pane label="API 密钥" name="keys">
+        <el-tab-pane v-if="isAdmin" label="API 密钥" name="keys">
           <div class="tab-bar">
             <p class="text-muted">密钥用于服务端调用问答接口，请妥善保管，不要在前端代码中明文暴露。</p>
             <el-button type="primary" @click="openKeyDialog">
@@ -413,7 +414,8 @@
         </el-tab-pane>
 
         <!-- 用户管理 -->
-        <el-tab-pane label="用户管理" name="users">
+        <!-- 用户管理（管理员及以上；操作按四级矩阵显隐） -->
+        <el-tab-pane v-if="canManageUsers" label="用户管理" name="users">
           <div class="tab-bar">
             <el-input v-model="userKeyword" placeholder="搜索用户名 / 昵称 / 邮箱" clearable style="width: 240px">
               <template #prefix><el-icon><Search /></el-icon></template>
@@ -437,8 +439,8 @@
             </el-table-column>
             <el-table-column label="角色" width="110">
               <template #default="{ row }">
-                <el-tag :type="row.role === 'admin' ? 'danger' : row.role === 'editor' ? 'primary' : 'info'" size="small" effect="light">
-                  {{ row.roleName }}
+                <el-tag :type="roleTagType(row.role)" size="small" effect="light">
+                  {{ row.roleName || roleLabel(row.role) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -454,8 +456,11 @@
             <el-table-column label="最近登录" width="160" prop="lastLoginAt" />
             <el-table-column label="操作" width="150" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" size="small" @click="openUserDialog(row)">编辑</el-button>
-                <el-button link type="danger" size="small" @click="handleDeleteUser(row)">删除</el-button>
+                <template v-if="canManageRow(row)">
+                  <el-button link type="primary" size="small" @click="openUserDialog(row)">编辑</el-button>
+                  <el-button link type="danger" size="small" @click="handleDeleteUser(row)">删除</el-button>
+                </template>
+                <span v-else class="text-muted" style="font-size: 12px">—</span>
               </template>
             </el-table-column>
           </el-table>
@@ -501,7 +506,7 @@
         </el-tab-pane>
 
         <!-- 操作日志 -->
-        <el-tab-pane label="操作日志" name="logs">
+        <el-tab-pane v-if="isAdmin" label="操作日志" name="logs">
           <el-table v-loading="logLoading" :data="logs" style="width: 100%">
             <el-table-column label="时间" width="170" prop="createdAt" />
             <el-table-column label="操作人" width="100" prop="user" />
@@ -559,9 +564,12 @@
         </el-form-item>
         <el-form-item label="角色">
           <el-select v-model="userForm.role" style="width: 100%">
-            <el-option label="超级管理员" value="admin" />
-            <el-option label="知识库编辑" value="editor" />
-            <el-option label="只读访客" value="viewer" />
+            <el-option
+              v-for="r in grantableRoles"
+              :key="r.value"
+              :label="r.label"
+              :value="r.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="部门">
@@ -648,8 +656,8 @@
         </el-table-column>
         <el-table-column label="角色" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.user?.role === 'admin' ? 'danger' : row.user?.role === 'editor' ? 'primary' : 'info'" size="small" effect="light">
-              {{ row.user?.role === 'admin' ? '超级管理员' : row.user?.role === 'editor' ? '知识库编辑' : '只读访客' }}
+            <el-tag :type="roleTagType(row.user?.role)" size="small" effect="light">
+              {{ row.user?.roleName || roleLabel(row.user?.role) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -706,6 +714,7 @@ import {
 import { llmModels, embeddingModels, vectorStores, llmProviderMeta } from '@/mock/knowledge'
 import { formatNumber, formatDateTime } from '@/utils/format'
 import { clone } from '@/utils/format'
+import { ROLE_LABELS, ROLE_TAG, canGrantRole, canManageUser } from '@/utils/rbac'
 
 const userStore = useUserStore()
 const knowledgeStore = useKnowledgeStore()
@@ -902,7 +911,26 @@ async function handleVerifyKey(p) {
 }
 
 /* ---------------- 嵌入渠道与全库重嵌入（admin） ---------------- */
-const isAdmin = computed(() => userStore.profile?.role === 'admin')
+const isAdmin = computed(() => userStore.isPlatform)
+const canManageUsers = computed(() => userStore.canManageUsers)
+const myRole = computed(() => userStore.profile?.role || 'viewer')
+
+/** 角色徽章/显示（utils/rbac 权威） */
+const roleTagType = (r) => ROLE_TAG[r] || 'info'
+const roleLabel = (r) => ROLE_LABELS[r] || r || '未知'
+
+/** 行级管理判定：目标 rank 严格低于我（owner 行对任何人都隐藏操作） */
+const canManageRow = (row) => canManageUser(myRole.value, row?.role)
+
+/** 用户对话框角色下拉：仅显示我可授予的角色（矩阵过滤，后端同款校验兜底） */
+const grantableRoles = computed(() =>
+  [
+    { value: 'super_admin', label: ROLE_LABELS.super_admin },
+    { value: 'admin', label: ROLE_LABELS.admin },
+    { value: 'viewer', label: ROLE_LABELS.viewer }
+  ].filter((o) => canGrantRole(myRole.value, o.value))
+)
+
 const emb = reactive({
   loaded: false,
   config: null,
@@ -1378,19 +1406,32 @@ async function loadLogs() {
 }
 
 onMounted(async () => {
+  // 先确保角色就绪（profile 通常已从 localStorage 恢复，此处兜底拉取）
+  if (!userStore.profile) await userStore.fetchProfile()
+  const plat = isPlatform.value    // 站长/超管：平台运维数据（v0.9.61 四级）
+  const mgr = canManageUsers.value // 管理员及以上：用户管理数据
+  // 权限外接口一律不调：普通用户调用会被后端 403 拒绝并弹错误提示
   await Promise.all([
-    loadSettings(),
     loadRuntimeModel(),
     knowledgeStore.fetchOptions(),
-    loadKeys(),
-    loadUsers(),
-    loadDepts(),
-    loadLogs()
+    ...(plat ? [loadSettings(), loadKeys(), loadDepts(), loadLogs()] : []),
+    ...(mgr ? [loadUsers()] : [])
   ])
-  if (!userStore.profile) await userStore.fetchProfile()
-  // admin 专属：嵌入渠道状态（依赖 profile.role 判定，故在 fetchProfile 之后）
-  if (isAdmin.value) await Promise.all([loadEmbeddingState(), loadUserOptions()])
+  // 平台级专属：嵌入渠道状态与部门用户下拉（依赖 profile.role 判定）
+  if (plat) await Promise.all([loadEmbeddingState(), loadUserOptions()])
 })
+
+// 权限收缩时不停留在被隐藏的管理 tab（如退出登录、角色降级后的残留 activeTab）
+watch(
+  [isPlatform, canManageUsers],
+  ([plat, mgr]) => {
+    if (!plat && ['model', 'retrieval', 'keys', 'departments', 'logs'].includes(activeTab.value)) {
+      activeTab.value = mgr ? 'users' : 'security'
+    }
+    if (!mgr && activeTab.value === 'users') activeTab.value = 'security'
+  },
+  { immediate: true }
+)
 
 onUnmounted(() => {
   if (embTimer) clearTimeout(embTimer)

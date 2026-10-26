@@ -25,6 +25,8 @@ export interface SourceView {
   docType: string | null;
   chunkId: string;
   chunkIndex: number;
+  /** 图片切片关联原图（v0.9.64 方案B），普通文本切片为 null */
+  imageId: string | null;
   page: number;
   score: number;
   snippet: string | null;
@@ -189,9 +191,9 @@ export class ConversationService {
       chunkIds.length
         ? this.prisma.chunk.findMany({
             where: { id: { in: chunkIds } },
-            select: { id: true, content: true },
+            select: { id: true, content: true, imageId: true },
           })
-        : Promise.resolve([] as { id: string; content: string }[]),
+        : Promise.resolve([] as { id: string; content: string; imageId: string | null }[]),
       this.prisma.knowledgeBase.findMany({
         where: { id: { in: kbIds } },
         select: { id: true, name: true },
@@ -200,6 +202,7 @@ export class ConversationService {
 
     const docMap = new Map(docs.map((d) => [d.id, d]));
     const chunkMap = new Map(chunks.map((c) => [c.id, c.content]));
+    const imageMap = new Map(chunks.map((c) => [c.id, c.imageId]));
     const kbMap = new Map(kbs.map((k) => [k.id, k.name]));
 
     for (const r of rows) {
@@ -215,6 +218,7 @@ export class ConversationService {
         docType: doc?.type || null,
         chunkId: r.chunkId,
         chunkIndex: r.chunkIndex,
+        imageId: imageMap.get(r.chunkId) || null,
         page: r.page,
         score: r.score,
         snippet: chunkMap.get(r.chunkId) || null,

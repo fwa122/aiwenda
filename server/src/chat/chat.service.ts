@@ -227,6 +227,19 @@ export class ChatService {
       if (!narrowed.length) throw new ForbiddenException('请求的知识库不在密钥授权范围内');
       kbIds = narrowed;
     }
+    // v0.9.62：问答不再让用户选库——未指定 kbIds 时默认检索全部可见就绪库
+    // （建库已收敛为站长/超管，可见库即官方维护文档；老会话携带的 kbIds 优先级不变）。
+    // 放在 apiKeyScope 收敛之后：密钥路径已收敛/403，不会走到这里。
+    if (!kbIds.length) {
+      const candidates = await this.prisma.knowledgeBase.findMany({
+        where: { status: 'ready' },
+        select: { id: true },
+      });
+      kbIds = await this.filterVisibleKbs(
+        candidates.map((k) => k.id),
+        userId,
+      );
+    }
     const usedModel = dto.model || conversation.model || model;
     // 附件：取回已提取文本（用后即删），随请求传给 AI 服务作为本次上下文
     const attachments = this.takeAttachments(dto.attachmentIds);

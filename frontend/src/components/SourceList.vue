@@ -26,6 +26,15 @@
             <span>第 {{ src.page }} 页</span>
             <span>切片 #{{ src.chunkIndex }}</span>
           </div>
+          <!-- v0.9.64：命中图片切片时直接展示原文档插图（点击放大） -->
+          <SourceImage :src="src" />
+          <!-- v0.9.63：PDF 引用可展开原文页快照（含文档中的图片），组件内部自判渲染条件 -->
+          <PageSnapshot
+            :doc-id="src.docId"
+            :doc-type="src.docType"
+            :page="src.page"
+            :doc-name="src.docName"
+          />
         </div>
       </div>
     </div>
@@ -35,6 +44,8 @@
 <script setup>
 import { ref } from 'vue'
 import DocTypeIcon from './DocTypeIcon.vue'
+import PageSnapshot from './PageSnapshot.vue'
+import SourceImage from './SourceImage.vue'
 
 const props = defineProps({
   sources: { type: Array, default: () => [] },

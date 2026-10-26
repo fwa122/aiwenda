@@ -92,6 +92,22 @@ export class DocumentController {
     private readonly log: OperationLogService
   ) {}
 
+  /**
+   * 文档插图原图（v0.9.64 方案B）：问答引用命中图片切片时按 imageId 取原图。
+   * 与文档文件流同口径（fetch→Blob 携带 JWT，URL 永不裸露）；imageId 不可变 → 强缓存。
+   */
+  @Get('images/:imageId/file')
+  async imageFile(
+    @Param('imageId') imageId: string,
+    @CurrentUser() user: any,
+    @Res({ passthrough: true }) res: Response
+  ): Promise<StreamableFile> {
+    const { stream, contentType } = await this.service.getImageFile(imageId, user);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
+    return new StreamableFile(stream);
+  }
+
   @Get(':docId/chunks')
   chunks(@Param('docId') docId: string, @CurrentUser() user: any) {
     return this.service.chunks(docId, user);

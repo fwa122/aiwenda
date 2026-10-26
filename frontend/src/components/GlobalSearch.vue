@@ -309,7 +309,7 @@ function jump(item) {
 }
 
 .gs-item.active .gs-item-icon {
-  color: var(--brand, #3f6ae1);
+  color: var(--brand);
 }
 
 .gs-item-main {
@@ -329,7 +329,7 @@ function jump(item) {
 }
 
 .gs-item-title :deep(mark) {
-  color: var(--brand, #3f6ae1);
+  color: var(--brand);
   font-weight: 600;
   background: transparent;
   padding: 0;

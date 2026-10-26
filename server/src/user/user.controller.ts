@@ -53,29 +53,34 @@ export class UsersController {
 
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
+  // 用户列表：管理员及以上可见（管理员查看，编辑/删除由服务层按四级范围校验）
+  @Roles('owner', 'super_admin', 'admin')
   list(@Query() query: any) {
     return this.userService.list(query);
   }
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  create(@Body() dto: CreateUserDto) {
-    return this.userService.create(dto);
+  @Roles('owner', 'super_admin', 'admin')
+  create(@Body() dto: CreateUserDto, @CurrentUser() actor: { role: string }) {
+    return this.userService.create(dto, actor);
   }
 
   @Put(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.userService.update(id, dto);
+  @Roles('owner', 'super_admin', 'admin')
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+    @CurrentUser() actor: { role: string }
+  ) {
+    return this.userService.update(id, dto, actor);
   }
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  remove(@Param('id') id: string) {
-    return this.userService.remove(id);
+  @Roles('owner', 'super_admin', 'admin')
+  remove(@Param('id') id: string, @CurrentUser() actor: { role: string }) {
+    return this.userService.remove(id, actor);
   }
 }

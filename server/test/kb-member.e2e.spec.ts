@@ -29,6 +29,8 @@ const EDT = `e2e_kbm_e_${RUN}`; // 被邀请为 editor 成员
 const VWR = `e2e_kbm_v_${RUN}`; // 被邀请为 viewer 成员
 const OUT = `e2e_kbm_x_${RUN}`; // 局外人（无任何关系）
 const KB_ID = `kb_kbm_${RUN}`;
+// v0.9.46 开放策略：注册即全员可读（PUBLIC 默认），写权仅 owner/admin/成员
+const KB_PUB_ID = `kb_kbm_pub_${RUN}`;
 
 let app: INestApplication;
 let prisma: PrismaService;
@@ -124,6 +126,20 @@ beforeAll(async () => {
       llmConfig: {},
     },
   });
+  // public 库：注册即读（无成员关系），验证「可见即可读、写权仅成员」
+  await prisma.knowledgeBase.create({
+    data: {
+      id: KB_PUB_ID,
+      name: `公共可读测试库${RUN}`,
+      description: 'e2e-public',
+      status: 'ready',
+      visibility: 'PUBLIC',
+      owner: OWNER,
+      userId: ownerId,
+      retrieverConfig: {},
+      llmConfig: {},
+    },
+  });
 
   ownerToken = await login(OWNER);
   adminToken = await login(ADMIN);
@@ -134,7 +150,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // 只清自己的数据（并行文件共享同一测试库）：库级联删成员，用户按前缀删
-  await prisma.knowledgeBase.deleteMany({ where: { id: KB_ID } }).catch(() => {});
+  await prisma.knowledgeBase
+    .deleteMany({ where: { id: { in: [KB_ID, KB_PUB_ID] } } })
+    .catch(() => {});
   await prisma.user
     .deleteMany({ where: { username: { startsWith: 'e2e_kbm_' } } })
     .catch(() => {});
@@ -336,5 +354,28 @@ describe('知识库成员管理 GET/POST /knowledge/:id/members', () => {
       token: ownerToken,
     });
     expect(again.status).toBe(404);
+  });
+});
+
+describe('v0.9.46 开放策略：注册即全员可读（PUBLIC 默认）', () => {
+  it('局外人（无成员关系）可读 PUBLIC 库，但不可写', async () => {
+    const detail = await probe('GET', `/api/v1/knowledge/${KB_PUB_ID}`, { token: outToken });
+    expect(detail.status).toBe(200);
+    expect(detail.body.data.myRole).toBeNull(); // 可读但无角色 → 前端不显示写入口
+
+    const denied = await probe('PUT', `/api/v1/knowledge/${KB_PUB_ID}`, {
+      token: outToken,
+      body: { description: '局外人不应可写' },
+    });
+    expect(denied.status).toBe(403);
+  });
+
+  it('PUBLIC 库出现在局外人列表中（普通用户注册即见），上传接口仍 403', async () => {
+    const list = await probe('GET', `/api/v1/knowledge?keyword=${encodeURIComponent(`公共可读测试库${RUN}`)}`, {
+      token: outToken,
+    });
+    expect(list.status).toBe(200);
+    expect(list.body.data.list).toHaveLength(1);
+    expect(list.body.data.list[0].id).toBe(KB_PUB_ID);
   });
 });

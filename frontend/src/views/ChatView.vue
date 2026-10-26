@@ -122,6 +122,7 @@
           :disabled="chatStore.streaming"
           :kb-ids="kbIds"
           :kb-options="kbOptions"
+          :kb-locked="true"
           :model="model"
           :model-options="modelOptions"
           :quick-prompts="chatStore.quickPrompts"
@@ -164,6 +165,17 @@
           class="preview-content md-body"
           @mouseup="handlePreviewMouseUp"
         >{{ preview.snippet }}</div>
+
+        <!-- v0.9.64：命中图片切片时展示原文档插图 -->
+        <SourceImage :src="preview" />
+
+        <!-- v0.9.63：PDF 引用可展开原文页快照（与引用卡片同组件） -->
+        <PageSnapshot
+          :doc-id="preview.docId"
+          :doc-type="preview.docType"
+          :page="preview.page"
+          :doc-name="preview.docName"
+        />
 
         <el-divider content-position="left">片段信息</el-divider>
         <el-descriptions :column="1" size="small" border>
@@ -210,7 +222,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { useChatStore, useKnowledgeStore } from '@/store'
+import { useChatStore, useKnowledgeStore, useUserStore } from '@/store'
+import { rankOf } from '@/utils/rbac'
 import { fileToBase64, uploadAttachments } from '@/api/chat'
 import { getFavoriteIds, addFavorite } from '@/api/favorite'
 import { ensureNotifyPermission, watchKb, stopWatch } from '@/composables/useParseWatcher'
@@ -222,11 +235,18 @@ import ChatInput from '@/components/ChatInput.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import DocTypeIcon from '@/components/DocTypeIcon.vue'
 import DocPreviewDrawer from '@/components/DocPreviewDrawer.vue'
+import PageSnapshot from '@/components/PageSnapshot.vue'
+import SourceImage from '@/components/SourceImage.vue'
 
 const route = useRoute()
 const router = useRouter()
 const chatStore = useChatStore()
 const knowledgeStore = useKnowledgeStore()
+const userStore = useUserStore()
+
+// v0.9.62：问答默认全库检索官方文档（仅站长/超管可建库/传文档），不再让用户手选知识库。
+// 新会话 kbIds 保持空数组，由后端默认展开为全部可见就绪库；老会话仍恢复其保存的 kbIds。
+const canUploadDocs = computed(() => rankOf(userStore.profile?.role) >= 3)
 
 const input = ref('')
 const kbIds = ref([])
@@ -257,7 +277,7 @@ const title = computed(() =>
 )
 
 const placeholder = computed(() =>
-  kbIds.value.length ? '基于知识库提问，Enter 发送…' : '未选择知识库时将使用通用知识回答…'
+  canUploadDocs.value ? '检索官方知识库，Enter 发送…' : '向官方知识库提问，Enter 发送…'
 )
 
 /** 用于驱动自动滚动：最后一条消息的内容长度 */
@@ -287,9 +307,7 @@ onMounted(async () => {
 
   refreshEmbSummary()
   await knowledgeStore.fetchOptions()
-  if (!kbIds.value.length) {
-    kbIds.value = kbOptions.value.filter((k) => k.status === 'ready').slice(0, 1).map((k) => k.id)
-  }
+  // v0.9.62：不再自动选第一个库——新会话空 kbIds 由后端默认全库检索
   await syncFromRoute(route.params.id)
   scrollToBottom()
 })
@@ -373,16 +391,19 @@ const MAX_DOC_SIZE = 20 * 1024 * 1024
 
 const dragDepth = ref(0)
 const dragActive = computed(() => dragDepth.value > 0)
-// 知识库选择器为多选，拖拽导入目标取第一个选中项
-const currentKbId = computed(() => kbIds.value[0] || '')
+// 拖拽导入目标：会话已选库优先，否则取第一个就绪库（仅站长/超管可上传）
+const currentKbId = computed(
+  () => kbIds.value[0] || kbOptions.value.find((k) => k.status === 'ready')?.id || ''
+)
 const currentKbName = computed(
   () => kbOptions.value.find((k) => k.id === currentKbId.value)?.name || ''
 )
-const dropHint = computed(() =>
-  currentKbId.value
-    ? `松开鼠标，导入到当前知识库「${currentKbName.value}」`
-    : '请先在下方选择知识库'
-)
+const dropHint = computed(() => {
+  if (!canUploadDocs.value) return '仅站长 / 超级管理员可上传文档'
+  return currentKbId.value
+    ? `松开鼠标，导入到「${currentKbName.value}」`
+    : '暂无可用知识库，请先创建'
+})
 
 /** 本组件启动的解析监听，卸载时统一清理 */
 const watchedKbIds = new Set()
@@ -395,6 +416,7 @@ function hasDragFiles(e) {
 
 function onDragEnter(e) {
   if (!hasDragFiles(e)) return
+  if (!canUploadDocs.value) return // 普通用户/管理员不显示导入遮罩（无上传权限）
   // 计数器方案：dragleave 在子元素间会抖动，进出配对抵消，归零才隐藏
   dragDepth.value += 1
 }
@@ -410,8 +432,12 @@ function onDrop(e) {
 
 async function handleDropFiles(fileList) {
   if (!fileList.length) return
+  if (!canUploadDocs.value) {
+    ElMessage.warning('仅站长 / 超级管理员可上传文档')
+    return
+  }
   if (!currentKbId.value) {
-    ElMessage.warning('请先在下方选择知识库，再拖拽导入文档')
+    ElMessage.warning('暂无可用知识库，请先在知识库页创建')
     return
   }
   ensureNotifyPermission() // 用户手势内请求浏览器通知权限

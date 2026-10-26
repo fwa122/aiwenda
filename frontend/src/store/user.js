@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import * as userApi from '@/api/user'
+import { rankOf } from '@/utils/rbac'
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -11,14 +12,22 @@ export const useUserStore = defineStore('user', {
   getters: {
     isLogin: (state) => !!state.token,
     nickname: (state) => state.profile?.nickname || '未登录',
-    isAdmin: (state) => state.profile?.role === 'admin',
+    // 四级角色 rank：站长4 / 超管3 / 管理员2 / 普通用户1（v0.9.61）
+    roleRank: (state) => rankOf(state.profile?.role),
+    // 平台运维级（站长+超管）：模型/检索/密钥/安全策略/部门/日志 tab、建库
+    isPlatform() {
+      return this.roleRank >= 3
+    },
+    // 用户管理级（管理员及以上）：用户管理 tab、数据分析
+    canManageUsers() {
+      return this.roleRank >= 2
+    },
     permissions() {
       const role = this.profile?.role || 'viewer'
-      return {
-        admin: ['chat', 'kb:read', 'kb:write', 'settings', 'user'],
-        editor: ['chat', 'kb:read', 'kb:write'],
-        viewer: ['chat', 'kb:read']
-      }[role] || ['chat']
+      const rank = rankOf(role)
+      if (rank >= 3) return ['chat', 'kb:read', 'kb:write', 'kb:create', 'settings', 'user']
+      if (rank >= 2) return ['chat', 'kb:read', 'user']
+      return ['chat', 'kb:read']
     }
   },
 

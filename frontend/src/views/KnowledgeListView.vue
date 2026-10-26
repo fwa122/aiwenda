@@ -22,10 +22,10 @@
             <el-option label="索引构建中" value="indexing" />
             <el-option label="草稿" value="draft" />
           </el-select>
-          <el-button :loading="importing" @click="triggerFolderImport">
+          <el-button v-if="canCreate" :loading="importing" @click="triggerFolderImport">
             <el-icon><FolderOpened /></el-icon>文件夹导入
           </el-button>
-          <el-button type="primary" @click="openCreate">
+          <el-button v-if="canCreate" type="primary" @click="openCreate">
             <el-icon><Plus /></el-icon>新建知识库
           </el-button>
           <input
@@ -189,7 +189,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { useKnowledgeStore, useUserStore } from '@/store'
-import { canWriteKb } from '@/utils/kb-access'
+import { canWriteKb, canCreateKb } from '@/utils/kb-access'
 import { getKnowledgeList, uploadDocuments } from '@/api/knowledge'
 import { ensureNotifyPermission, watchKb, stopWatch } from '@/composables/useParseWatcher'
 import {
@@ -206,6 +206,8 @@ const userStore = useUserStore()
 
 /** 写权限门控（与后端 kb-access 口径一致）：非 owner 隐藏重建/删除入口，避免点击后 403 */
 const canWrite = (kb) => canWriteKb(kb, userStore.profile)
+// 建库/批量导入：站长/超管（v0.9.61 四级，后端 POST /knowledge 同口径）
+const canCreate = computed(() => canCreateKb(userStore.profile))
 
 const keyword = ref('')
 const status = ref('')
@@ -240,11 +242,11 @@ const stats = computed(() => {
     ? list.reduce((sum, kb) => sum + (kb.stats?.hitRate || 0), 0) / list.length
     : 0
   return [
-    { label: '知识库总数', value: list.length, icon: 'Collection', color: '#3f6ae1', bg: '#eef3ff' },
-    { label: '文档总数', value: docCount, icon: 'Document', color: '#18a058', bg: '#eaf7f0' },
-    { label: '切片总数', value: formatNumber(chunkCount), icon: 'Files', color: '#e37318', bg: '#fdf3e7' },
-    { label: '本周问答量', value: formatNumber(questions), icon: 'ChatDotRound', color: '#8b5cf6', bg: '#f3effd' },
-    { label: '平均命中率', value: `${(hitRate * 100).toFixed(1)}%`, icon: 'TrendCharts', color: '#0ea5e9', bg: '#e8f6fd' }
+    { label: '知识库总数', value: list.length, icon: 'Collection', color: '#ff6a3d', bg: '#ffefe7' },
+    { label: '文档总数', value: docCount, icon: 'Document', color: '#3d9a6c', bg: '#eaf5ee' },
+    { label: '切片总数', value: formatNumber(chunkCount), icon: 'Files', color: '#d4823d', bg: '#faf1e4' },
+    { label: '本周问答量', value: formatNumber(questions), icon: 'ChatDotRound', color: '#d16a8a', bg: '#fbeef2' },
+    { label: '平均命中率', value: `${(hitRate * 100).toFixed(1)}%`, icon: 'TrendCharts', color: '#7a9a4e', bg: '#f1f6e6' }
   ]
 })
 

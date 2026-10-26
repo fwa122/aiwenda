@@ -6,7 +6,7 @@ import { OperationLogService } from './operation-log.service';
 
 @Controller('logs')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin')
+@Roles('owner', 'super_admin')
 export class LogController {
   constructor(private readonly service: OperationLogService) {}
 

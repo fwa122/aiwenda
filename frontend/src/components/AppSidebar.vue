@@ -1,5 +1,5 @@
 <template>
-  <aside class="sidebar">
+  <aside class="sidebar" :class="{ 'is-open': mobileOpen }">
     <!-- 品牌区（点击返回官网首页） -->
     <div class="brand" @click="$router.push({ name: 'landing' })" title="返回官网首页" style="cursor: pointer;">
       <div class="brand-logo">
@@ -9,10 +9,14 @@
         <div class="brand-name">AI 知识库问答</div>
         <div class="brand-sub">Knowledge Base Assistant</div>
       </div>
+      <!-- 移动端：收起抽屉 -->
+      <button class="drawer-close" aria-label="收起菜单" @click.stop="$emit('close')">
+        <el-icon :size="17"><Close /></el-icon>
+      </button>
     </div>
 
     <!-- 全局搜索入口 -->
-    <button class="search-entry" @click="searchOpen = true">
+    <button class="search-entry" @click="$emit('search')">
       <el-icon :size="15"><Search /></el-icon>
       <span>全局搜索</span>
       <kbd>Ctrl + K</kbd>
@@ -23,9 +27,6 @@
       <el-icon :size="15"><EditPen /></el-icon>
       <span>新建对话</span>
     </button>
-
-    <!-- 全局搜索弹窗（Ctrl+K）：会话 / 文档 / 回答内容 -->
-    <GlobalSearch v-model="searchOpen" />
 
     <!-- 主导航 -->
     <nav class="nav">
@@ -126,20 +127,23 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useChatStore, useUserStore } from '@/store'
 import ConversationItem from './ConversationItem.vue'
-import GlobalSearch from './GlobalSearch.vue'
+
+defineProps({
+  /** 移动端抽屉是否展开（桌面端忽略） */
+  mobileOpen: { type: Boolean, default: false }
+})
+
+defineEmits(['close', 'search'])
 
 const route = useRoute()
 const router = useRouter()
 const chatStore = useChatStore()
 const userStore = useUserStore()
-
-/** 全局搜索弹窗显隐（Ctrl+K 触发） */
-const searchOpen = ref(false)
 
 const avatarText = computed(() => (userStore.nickname || 'U').slice(0, 1).toUpperCase())
 const pinnedList = computed(() => chatStore.pinnedList)
@@ -151,20 +155,7 @@ function isActive(path) {
 onMounted(async () => {
   await chatStore.fetchConversations()
   await chatStore.fetchSuggestions()
-  window.addEventListener('keydown', handleKeydown)
 })
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeydown)
-})
-
-function handleKeydown(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-    e.preventDefault()
-    // Ctrl+K 打开全局搜索（原为新建对话，搜索入口迁移至此）
-    searchOpen.value = true
-  }
-}
 
 function handleNewChat() {
   chatStore.resetConversation()
@@ -447,5 +438,43 @@ function handleCommand(cmd) {
 
 .arrow {
   color: var(--c-text-4);
+}
+
+/* 移动端收起按钮（桌面隐藏） */
+.drawer-close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  color: var(--c-text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 1001;
+    max-width: 84vw;
+    transform: translateX(-100%);
+    transition: transform 0.24s ease;
+    box-shadow: var(--shadow-l);
+  }
+
+  .sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .drawer-close {
+    display: flex;
+  }
 }
 </style>

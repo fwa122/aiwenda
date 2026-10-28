@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     :model-value="modelValue"
-    width="560px"
+    :width="isMobile ? '92vw' : '560px'"
     append-to-body
     :show-close="false"
     class="global-search-dialog"
@@ -68,6 +68,9 @@ import { useRouter } from 'vue-router'
 import { ArrowRight, ChatDotRound, ChatLineRound, Collection, Search } from '@element-plus/icons-vue'
 import { searchAll } from '@/api/chat'
 import { formatDateTime } from '@/utils/format'
+import { useIsMobile } from '@/composables/useIsMobile'
+
+const isMobile = useIsMobile()
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false }

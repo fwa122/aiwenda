@@ -1,5 +1,5 @@
 <template>
-  <el-drawer v-model="visible" title="评测用例管理" size="660px">
+  <el-drawer v-model="visible" title="评测用例管理" :size="isMobile ? '100%' : '660px'">
     <div class="case-drawer">
       <div class="case-toolbar">
         <el-input
@@ -7,7 +7,7 @@
           placeholder="搜索问题 / 目标文档"
           clearable
           size="small"
-          style="width: 190px"
+          class="case-search"
         >
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
@@ -145,6 +145,7 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Upload, Download, ArrowDown } from '@element-plus/icons-vue'
+import { useIsMobile } from '@/composables/useIsMobile'
 import {
   getEvalCases,
   createEvalCase,
@@ -159,6 +160,8 @@ const props = defineProps({
   canWrite: { type: Boolean, default: false }
 })
 const emit = defineEmits(['update:modelValue', 'changed'])
+
+const isMobile = useIsMobile()
 
 const visible = computed({
   get: () => props.modelValue,
@@ -420,6 +423,10 @@ function exportCases() {
   gap: 10px;
 }
 
+.case-search {
+  width: 190px;
+}
+
 .case-actions {
   display: flex;
   align-items: center;
@@ -439,5 +446,21 @@ function exportCases() {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   line-height: 1.6;
+}
+
+/* ============================ 移动端适配 ============================ */
+@media (max-width: 768px) {
+  .case-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .case-search {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .case-actions {
+    flex-wrap: wrap;
+  }
 }
 </style>

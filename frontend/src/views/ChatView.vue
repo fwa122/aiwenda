@@ -149,7 +149,7 @@
     </transition>
 
     <!-- 引用来源预览抽屉 -->
-    <el-drawer v-model="previewVisible" :title="preview?.docName || '原文片段'" size="440px">
+    <el-drawer v-model="previewVisible" :title="preview?.docName || '原文片段'" :size="isMobile ? '100%' : '440px'">
       <div v-if="preview" ref="previewRef" class="preview">
         <div class="preview-meta">
           <DocTypeIcon :type="preview.docType" />
@@ -228,6 +228,7 @@ import { fileToBase64, uploadAttachments } from '@/api/chat'
 import { getFavoriteIds, addFavorite } from '@/api/favorite'
 import { ensureNotifyPermission, watchKb, stopWatch } from '@/composables/useParseWatcher'
 import { useEmbeddingSummary } from '@/composables/useEmbeddingSummary'
+import { useIsMobile } from '@/composables/useIsMobile'
 import { llmModels } from '@/mock/knowledge'
 import { formatNumber, formatDateTime } from '@/utils/format'
 import ChatMessage from '@/components/ChatMessage.vue'
@@ -243,6 +244,7 @@ const router = useRouter()
 const chatStore = useChatStore()
 const knowledgeStore = useKnowledgeStore()
 const userStore = useUserStore()
+const isMobile = useIsMobile()
 
 // v0.9.62：问答默认全库检索官方文档（仅站长/超管可建库/传文档），不再让用户手选知识库。
 // 新会话 kbIds 保持空数组，由后端默认展开为全部可见就绪库；老会话仍恢复其保存的 kbIds。
@@ -1059,5 +1061,51 @@ function handleExport() {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* ============================ 移动端适配 ============================ */
+@media (max-width: 768px) {
+  .topbar {
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .conv-title {
+    max-width: none;
+    font-size: 14px;
+  }
+
+  .conv-meta {
+    gap: 8px;
+    font-size: 11px;
+  }
+
+  .chat-inner {
+    padding: 12px 14px 8px;
+  }
+
+  .chat-footer {
+    padding: 0 10px;
+  }
+
+  .footer-inner {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .followups {
+    padding-left: 0;
+  }
+
+  .emb-alert {
+    margin: 0 12px 8px;
+  }
+
+  .drop-panel {
+    padding: 24px 24px;
+  }
+
+  .drop-sub {
+    text-align: center;
+  }
 }
 </style>

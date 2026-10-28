@@ -57,11 +57,11 @@
                   v-model="docKeyword"
                   placeholder="搜索文件名"
                   clearable
-                  style="width: 220px"
+                  class="search-input"
                 >
                   <template #prefix><el-icon><Search /></el-icon></template>
                 </el-input>
-                <el-select v-model="docStatus" placeholder="全部状态" clearable style="width: 130px" @change="loadDocs">
+                <el-select v-model="docStatus" placeholder="全部状态" clearable class="status-select" @change="loadDocs">
                   <el-option v-for="(v, k) in docStatusMap" :key="k" :label="v.label" :value="k" />
                 </el-select>
                 <el-button v-if="canWrite && selectedDocs.length" type="danger" plain @click="handleBatchDelete">
@@ -107,11 +107,11 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="切片数" width="90" prop="chunkCount" align="right" />
-              <el-table-column label="大小" width="100" align="right">
+              <el-table-column v-if="!isMobile" label="切片数" width="90" prop="chunkCount" align="right" />
+              <el-table-column v-if="!isMobile" label="大小" width="100" align="right">
                 <template #default="{ row }">{{ formatSize(row.size) }}</template>
               </el-table-column>
-              <el-table-column label="页数" width="80" prop="pages" align="right" />
+              <el-table-column v-if="!isMobile" label="页数" width="80" prop="pages" align="right" />
               <el-table-column label="状态" width="150">
                 <template #default="{ row }">
                   <el-tag :type="docStatusMap[row.status].type" size="small" effect="light">
@@ -126,11 +126,11 @@
                   <div v-if="row.errorMsg" class="doc-error">{{ row.errorMsg }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="上传者" width="100" prop="uploader" />
-              <el-table-column label="更新时间" width="160">
+              <el-table-column v-if="!isMobile" label="上传者" width="100" prop="uploader" />
+              <el-table-column v-if="!isMobile" label="更新时间" width="160">
                 <template #default="{ row }">{{ fromNow(row.updatedAt) }}</template>
               </el-table-column>
-              <el-table-column label="操作" width="250" fixed="right">
+              <el-table-column label="操作" :width="isMobile ? 150 : 250" fixed="right">
                 <template #default="{ row }">
                   <el-button link type="primary" size="small" @click="openPreview(row)">预览</el-button>
                   <el-button link type="primary" size="small" @click="handleDownload(row)">下载</el-button>
@@ -214,10 +214,10 @@
             <el-form :model="configForm" label-width="120px" class="config-form">
               <el-divider content-position="left">基本信息</el-divider>
               <el-form-item label="名称">
-                <el-input v-model="configForm.name" style="width: 420px" />
+                <el-input v-model="configForm.name" class="form-w" />
               </el-form-item>
               <el-form-item label="描述">
-                <el-input v-model="configForm.description" type="textarea" :rows="2" style="width: 420px" />
+                <el-input v-model="configForm.description" type="textarea" :rows="2" class="form-w" />
               </el-form-item>
               <el-form-item label="可见范围">
                 <el-radio-group v-model="configForm.visibility" :disabled="!canEditScope">
@@ -232,6 +232,7 @@
                   v-model="configForm.orgId"
                   placeholder="保持当前归属"
                   style="width: 420px"
+                  class="form-w"
                   :disabled="!canEditScope"
                   clearable
                 >
@@ -242,13 +243,13 @@
 
               <el-divider content-position="left">索引配置</el-divider>
               <el-form-item label="Embedding">
-                <el-select v-model="configForm.embeddingModel" style="width: 420px">
+                <el-select v-model="configForm.embeddingModel" class="form-w" style="width: 420px">
                   <el-option v-for="m in embeddingModels" :key="m.value" :label="m.label" :value="m.value" />
                 </el-select>
                 <span class="form-hint">更换模型需重建索引</span>
               </el-form-item>
               <el-form-item label="解析策略">
-                <el-select v-model="configForm.parser" style="width: 420px">
+                <el-select v-model="configForm.parser" class="form-w" style="width: 420px">
                   <el-option v-for="p in parserOptions" :key="p.value" :label="p.label" :value="p.value" />
                 </el-select>
               </el-form-item>
@@ -275,7 +276,7 @@
 
               <el-divider content-position="left">生成配置</el-divider>
               <el-form-item label="推理模型">
-                <el-select v-model="configForm.llmModel" style="width: 420px">
+                <el-select v-model="configForm.llmModel" class="form-w" style="width: 420px">
                   <el-option v-for="m in llmModels" :key="m.value" :label="m.label" :value="m.value" />
                 </el-select>
               </el-form-item>
@@ -296,6 +297,7 @@
                     :remote-method="searchCandidates"
                     :loading="candidatesLoading"
                     placeholder="搜索用户名 / 昵称"
+                    class="form-w"
                     style="width: 240px"
                   >
                     <el-option
@@ -315,7 +317,7 @@
                   <span class="form-hint">可编辑：可上传文档 / 改配置；仅查看：只能检索与问答</span>
                 </el-form-item>
                 <el-form-item label="成员列表">
-                  <el-table :data="memberRows" size="small" style="width: 620px" empty-text="暂无协作者，邀请成员共同维护知识库">
+                  <el-table :data="memberRows" size="small" class="member-table" style="width: 620px" empty-text="暂无协作者，邀请成员共同维护知识库">
                     <el-table-column label="成员" min-width="150">
                       <template #default="{ row }">
                         <div class="member-cell">
@@ -554,6 +556,7 @@ import {
 } from '@/api/knowledge'
 import { watchKb, stopWatch } from '@/composables/useParseWatcher'
 import { useEmbeddingSummary } from '@/composables/useEmbeddingSummary'
+import { useIsMobile } from '@/composables/useIsMobile'
 import { getUsageStats } from '@/api/user'
 import { getDeptTree } from '@/api/department'
 import { kbStatusMap, docStatusMap, embeddingModels, parserOptions, llmModels } from '@/mock/knowledge'
@@ -565,6 +568,7 @@ import EvalCaseDrawer from '@/components/EvalCaseDrawer.vue'
 const route = useRoute()
 const knowledgeStore = useKnowledgeStore()
 const userStore = useUserStore()
+const isMobile = useIsMobile()
 
 const activeTab = ref('docs')
 const kb = computed(() => knowledgeStore.current)
@@ -1588,5 +1592,31 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.8;
   color: var(--c-text-2);
+}
+
+/* ============================ 移动端适配 ============================ */
+@media (max-width: 768px) {
+  .metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .detail-tabs {
+    padding: 2px 12px 16px;
+  }
+
+  .search-input {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  /* 成员表小屏占满表单内容区，列宽自动收缩 */
+  .member-table {
+    width: 100% !important;
+  }
+
+  .eval-toolbar {
+    flex-wrap: wrap;
+  }
 }
 </style>

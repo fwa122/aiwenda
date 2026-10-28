@@ -1,0 +1,51 @@
+/* ==========================================================================
+   移动端适配层（统一断点：≤768px，与 composables/useIsMobile.js 保持一致）
+   只放跨页面通用的兜底规则；页面私有布局在各组件的 scoped 样式内处理。
+   ========================================================================== */
+
+/* 触屏设备：hover 才显示的交互改为常显/可点 */
+@media (hover: none) {
+  .md-body .code-block .code-copy,
+  .md-body .table-block .table-copy {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  /* ---- 弹窗：统一收窄为近全屏宽 ---- */
+  .el-dialog {
+    --el-dialog-width: 92vw !important;
+    max-width: 92vw;
+  }
+
+  .el-message-box {
+    max-width: 92vw;
+  }
+
+  /* ---- 表单控件：内联固定宽度的收口（配合页面内 .form-w 使用） ---- */
+  .form-w {
+    width: 100% !important;
+  }
+
+  /* el-form label 置顶，避免左标签挤压控件 */
+  .el-form:not(.el-form--inline) .el-form-item__label {
+    display: block;
+    width: 100% !important;
+    text-align: left;
+  }
+
+  .el-form:not(.el-form--inline) .el-form-item {
+    display: block;
+  }
+
+  /* ---- 触控目标：按钮/输入框加高，点击更稳 ---- */
+  .el-button--small {
+    height: 30px;
+    padding: 0 12px;
+  }
+
+  /* ---- 通用容器留白收紧 ---- */
+  .page-inner {
+    padding: 16px 14px;
+  }
+}

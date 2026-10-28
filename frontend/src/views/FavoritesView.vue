@@ -410,4 +410,27 @@ async function handleExport() {
   justify-content: center;
   margin-top: 20px;
 }
+
+/* ============================ 移动端适配 ============================ */
+@media (max-width: 768px) {
+  .page-head {
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .head-actions {
+    width: 100%;
+  }
+
+  .head-actions :deep(.el-select) {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+
+  .fav-card {
+    padding: 12px 14px;
+  }
+}
 </style>

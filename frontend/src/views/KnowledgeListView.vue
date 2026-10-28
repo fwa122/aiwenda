@@ -12,12 +12,12 @@
             v-model="keyword"
             placeholder="搜索知识库名称 / 描述"
             clearable
-            style="width: 220px"
+            class="search-input"
             @input="handleSearch"
           >
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
-          <el-select v-model="status" placeholder="全部状态" clearable style="width: 130px" @change="load">
+          <el-select v-model="status" placeholder="全部状态" clearable class="status-select" @change="load">
             <el-option label="已就绪" value="ready" />
             <el-option label="索引构建中" value="indexing" />
             <el-option label="草稿" value="draft" />
@@ -465,6 +465,14 @@ async function importGroups(groups, skipped) {
   gap: 8px;
 }
 
+.search-input {
+  width: 220px;
+}
+
+.status-select {
+  width: 130px;
+}
+
 .hidden-folder-input {
   display: none;
 }
@@ -637,6 +645,38 @@ async function importGroups(groups, skipped) {
 @media (max-width: 1100px) {
   .stats {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ============================ 移动端适配 ============================ */
+@media (max-width: 768px) {
+  .page-head {
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .search-input {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .stat-card {
+    padding: 10px 12px;
+  }
+
+  .kb-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .kb-metrics {
+    gap: 14px;
   }
 }
 </style>

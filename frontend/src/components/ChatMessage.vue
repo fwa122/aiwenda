@@ -435,4 +435,20 @@ function confirmDislike() {
   font-weight: 500;
 }
 
+/* ============================ 移动端适配 ============================ */
+@media (max-width: 768px) {
+  .msg {
+    gap: 8px;
+    padding: 14px 0;
+  }
+
+  .avatar {
+    width: 24px;
+    height: 24px;
+  }
+
+  .bubble {
+    padding: 10px 12px;
+  }
+}
 </style>

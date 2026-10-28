@@ -2,7 +2,7 @@
   <el-drawer
     :model-value="modelValue"
     :title="name || '文档预览'"
-    size="62%"
+    :size="isMobile ? '100%' : '62%'"
     append-to-body
     @update:model-value="(v) => emit('update:modelValue', v)"
     @closed="reset"
@@ -65,6 +65,7 @@ import { ElMessage } from 'element-plus'
 import VuePdfEmbed from 'vue-pdf-embed'
 import { fetchDocumentFile, downloadDocument } from '@/api/knowledge'
 import { renderMarkdown } from '@/utils/markdown'
+import { useIsMobile } from '@/composables/useIsMobile'
 
 const props = defineProps({
   /** 抽屉可见性（v-model） */
@@ -82,6 +83,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue', 'snippet'])
+
+const isMobile = useIsMobile()
 
 const loading = ref(false)
 const html = ref('')

@@ -95,11 +95,11 @@
               </div>
             </el-form-item>
             <el-form-item label="温度 Temperature">
-              <el-slider v-model="settings.model.temperature" :min="0" :max="1" :step="0.1" style="width: 320px" />
+              <el-slider v-model="settings.model.temperature" :min="0" :max="1" :step="0.1" class="form-w" style="width: 320px" />
               <span class="form-hint">{{ settings.model.temperature.toFixed(1) }} · 越小越严谨</span>
             </el-form-item>
             <el-form-item label="Top P">
-              <el-slider v-model="settings.model.topP" :min="0" :max="1" :step="0.05" style="width: 320px" />
+              <el-slider v-model="settings.model.topP" :min="0" :max="1" :step="0.05" class="form-w" style="width: 320px" />
               <span class="form-hint">{{ settings.model.topP.toFixed(2) }}</span>
             </el-form-item>
             <el-form-item label="最大输出">
@@ -140,7 +140,7 @@
               <span class="form-hint">新建知识库的默认值</span>
             </el-form-item>
             <el-form-item label="相似度阈值">
-              <el-slider v-model="settings.retrieval.threshold" :min="0" :max="1" :step="0.01" style="width: 320px" />
+              <el-slider v-model="settings.retrieval.threshold" :min="0" :max="1" :step="0.01" class="form-w" style="width: 320px" />
               <span class="form-hint">{{ settings.retrieval.threshold.toFixed(2) }}</span>
             </el-form-item>
             <el-form-item label="混合检索">
@@ -154,7 +154,7 @@
                 :max="1"
                 :step="0.05"
                 :disabled="!settings.retrieval.hybrid"
-                style="width: 320px"
+                class="form-w" style="width: 320px"
               />
               <span class="form-hint">{{ settings.retrieval.vectorWeight.toFixed(2) }}</span>
             </el-form-item>
@@ -163,7 +163,7 @@
               <span class="form-hint">粗召回后精排重排（后续版本支持）</span>
             </el-form-item>
             <el-form-item v-if="settings.retrieval.rerank" label="精排模型">
-              <el-select v-model="settings.retrieval.rerankModel" style="width: 320px">
+              <el-select v-model="settings.retrieval.rerankModel" class="form-w" style="width: 320px">
                 <el-option label="bge-reranker-large" value="bge-reranker-large" />
                 <el-option label="bge-reranker-base" value="bge-reranker-base" />
               </el-select>
@@ -183,7 +183,7 @@
                 :min="0.05"
                 :max="0.3"
                 :step="0.01"
-                style="width: 320px"
+                class="form-w" style="width: 320px"
               />
               <span class="form-hint">
                 cosine 距离 ≤ {{ Number(settings.cache.cacheThreshold).toFixed(2) }}（越小越严格，0.12 ≈ 相似度 0.88）
@@ -270,12 +270,12 @@
 
             <el-divider content-position="left">存储与解析</el-divider>
             <el-form-item label="向量库">
-              <el-select v-model="settings.storage.vectorStore" style="width: 320px">
+              <el-select v-model="settings.storage.vectorStore" class="form-w" style="width: 320px">
                 <el-option v-for="v in vectorStores" :key="v.value" :label="v.label" :value="v.value" />
               </el-select>
             </el-form-item>
             <el-form-item label="Embedding">
-              <el-select v-model="settings.storage.embeddingModel" style="width: 320px">
+              <el-select v-model="settings.storage.embeddingModel" class="form-w" style="width: 320px">
                 <el-option v-for="m in embeddingModels" :key="m.value" :label="m.label" :value="m.value" />
               </el-select>
             </el-form-item>
@@ -299,16 +299,16 @@
             <template #header><span class="card-title">账号信息</span></template>
             <el-form :model="profileForm" label-width="100px" class="setting-form">
               <el-form-item label="昵称">
-                <el-input v-model="profileForm.nickname" style="width: 280px" />
+                <el-input v-model="profileForm.nickname" class="form-w" style="width: 280px" />
               </el-form-item>
               <el-form-item label="邮箱">
-                <el-input v-model="profileForm.email" style="width: 280px" />
+                <el-input v-model="profileForm.email" class="form-w" style="width: 280px" />
               </el-form-item>
               <el-form-item label="手机号">
-                <el-input v-model="profileForm.phone" style="width: 280px" />
+                <el-input v-model="profileForm.phone" class="form-w" style="width: 280px" />
               </el-form-item>
               <el-form-item label="所属部门">
-                <el-input v-model="profileForm.department" style="width: 280px" />
+                <el-input v-model="profileForm.department" class="form-w" style="width: 280px" />
               </el-form-item>
               <el-form-item>
                 <el-button type="primary" :loading="savingProfile" @click="saveProfile">保存资料</el-button>
@@ -320,13 +320,13 @@
             <template #header><span class="card-title">修改密码</span></template>
             <el-form :model="pwdForm" label-width="100px" class="setting-form">
               <el-form-item label="原密码">
-                <el-input v-model="pwdForm.oldPassword" type="password" show-password style="width: 280px" />
+                <el-input v-model="pwdForm.oldPassword" type="password" show-password class="form-w" style="width: 280px" />
               </el-form-item>
               <el-form-item label="新密码">
-                <el-input v-model="pwdForm.newPassword" type="password" show-password style="width: 280px" />
+                <el-input v-model="pwdForm.newPassword" type="password" show-password class="form-w" style="width: 280px" />
               </el-form-item>
               <el-form-item label="确认密码">
-                <el-input v-model="pwdForm.confirmPassword" type="password" show-password style="width: 280px" />
+                <el-input v-model="pwdForm.confirmPassword" type="password" show-password class="form-w" style="width: 280px" />
               </el-form-item>
               <el-form-item>
                 <el-button :loading="savingPwd" @click="savePassword">修改密码</el-button>
@@ -417,7 +417,7 @@
         <!-- 用户管理（管理员及以上；操作按四级矩阵显隐） -->
         <el-tab-pane v-if="canManageUsers" label="用户管理" name="users">
           <div class="tab-bar">
-            <el-input v-model="userKeyword" placeholder="搜索用户名 / 昵称 / 邮箱" clearable style="width: 240px">
+            <el-input v-model="userKeyword" placeholder="搜索用户名 / 昵称 / 邮箱" clearable class="search-input">
               <template #prefix><el-icon><Search /></el-icon></template>
             </el-input>
             <el-button type="primary" @click="openUserDialog()">
@@ -635,7 +635,7 @@
     <!-- 部门成员管理 -->
     <el-dialog v-model="membersDialog" :title="`成员管理 · ${memberDept?.name || ''}`" width="640px">
       <div class="tab-bar member-add-bar">
-        <el-select v-model="memberForm.userId" filterable placeholder="选择要指派的用户" style="width: 240px">
+        <el-select v-model="memberForm.userId" filterable placeholder="选择要指派的用户" class="form-w" style="width: 240px">
           <el-option
             v-for="u in addableUsers"
             :key="u.id"
@@ -911,7 +911,7 @@ async function handleVerifyKey(p) {
 }
 
 /* ---------------- 嵌入渠道与全库重嵌入（admin） ---------------- */
-const isAdmin = computed(() => userStore.isPlatform)
+const isPlatform = computed(() => userStore.isPlatform)
 const canManageUsers = computed(() => userStore.canManageUsers)
 const myRole = computed(() => userStore.profile?.role || 'viewer')
 
@@ -1441,6 +1441,7 @@ onUnmounted(() => {
 <style scoped>
 .reembed-progress {
   width: 420px;
+  max-width: 100%;
 }
 
 .reembed-progress .el-progress {
@@ -1583,5 +1584,26 @@ onUnmounted(() => {
 
 .u-sub {
   font-size: 11.5px;
+}
+
+.search-input {
+  width: 240px;
+}
+
+/* ============================ 移动端适配 ============================ */
+@media (max-width: 768px) {
+  .settings-tabs {
+    padding: 2px 12px 16px;
+  }
+
+  .tab-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .search-input {
+    flex: 1 1 100%;
+    width: 100%;
+  }
 }
 </style>

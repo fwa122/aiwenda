@@ -104,7 +104,7 @@
                不能把 el-tooltip 套进 #reference —— 组件嵌套会导致 popover 弹层永远 display:none -->
           <el-popover
             placement="top-start"
-            :width="296"
+            :width="isMobile ? '88vw' : 296"
             trigger="click"
             :virtual-ref="retrieverBtnRef"
             virtual-triggering
@@ -207,6 +207,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import DocTypeIcon from './DocTypeIcon.vue'
+import { useIsMobile } from '@/composables/useIsMobile'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -232,6 +233,8 @@ const emit = defineEmits([
   'update:model',
   'update:retriever'
 ])
+
+const isMobile = useIsMobile()
 
 const textareaRef = ref(null)
 const focused = ref(false)
@@ -750,5 +753,36 @@ defineExpose({ focus: () => textareaRef.value?.focus() })
 .icon-btn.active {
   color: var(--brand);
   background: var(--brand-soft);
+}
+
+/* ============================ 移动端适配 ============================ */
+@media (max-width: 768px) {
+  /* 工具栏允许换行，避免左侧控件挤出屏幕 */
+  .toolbar,
+  .toolbar-left {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .model-select {
+    width: 124px;
+  }
+
+  .kb-locked-tag {
+    max-width: 160px;
+    font-size: 11px;
+  }
+
+  .char-count {
+    display: none;
+  }
+
+  .quick {
+    justify-content: flex-start;
+  }
+
+  .slash-desc {
+    display: none;
+  }
 }
 </style>
